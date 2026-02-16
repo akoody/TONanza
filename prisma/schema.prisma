@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  BROADCASTED
+  COMPLETED
+  FAILED
+}
+
+enum GameStatus {
+  OPEN
+  LOCKED
+  FINISHED
+  CANCELLED
+}
+
+model User {
+  id              BigInt   @id @default(autoincrement()) @db.BigInt
+  telegramId      BigInt   @unique @map("telegram_id") @db.BigInt
+  balanceNanotons BigInt   @default(0) @map("balance_nanotons") @db.BigInt
+  walletAddress   String?  @map("wallet_address") @db.VarChar(128)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  deposits    Deposit[]
+  withdrawals Withdrawal[]
+  bets        Bet[]
+  wonGames    Game[]       @relation("GameWinner")
+
+  @@map("users")
+}
+
+model Deposit {
+  id             BigInt        @id @default(autoincrement()) @db.BigInt
+  userId         BigInt?       @map("user_id") @db.BigInt
+  txHash         String        @unique @map("tx_hash") @db.VarChar(128)
+  amountNanotons BigInt        @map("amount_nanotons") @db.BigInt
+  status         DepositStatus @default(PENDING)
+  comment        String?       @db.VarChar(255)
+  sourceAddress  String?       @map("source_address") @db.VarChar(128)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  confirmedAt    DateTime?     @map("confirmed_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@map("deposits")
+}
+
+model Withdrawal {
+  id             BigInt           @id @default(autoincrement()) @db.BigInt
+  userId         BigInt           @map("user_id") @db.BigInt
+  amountNanotons BigInt           @map("amount_nanotons") @db.BigInt
+  status         WithdrawalStatus @default(PENDING)
+  txHash         String?          @map("tx_hash") @db.VarChar(128)
+  toAddress      String           @map("to_address") @db.VarChar(128)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, status])
+  @@map("withdrawals")
+}
+
+model Game {
+  id               BigInt     @id @default(autoincrement()) @db.BigInt
+  serverSeed       String     @map("server_seed") @db.VarChar(128)
+  serverSeedHash   String     @map("server_seed_hash") @db.VarChar(128)
+  clientSeed       String?    @map("client_seed") @db.VarChar(255)
+  winnerId         BigInt?    @map("winner_id") @db.BigInt
+  status           GameStatus @default(OPEN)
+  totalPotNanotons BigInt     @default(0) @map("total_pot_nanotons") @db.BigInt
+  commission       BigInt     @default(0) @db.BigInt
+  nextTicket       BigInt     @default(1) @map("next_ticket") @db.BigInt
+  startsAt         DateTime   @default(now()) @map("starts_at")
+  endsAt           DateTime   @map("ends_at")
+  resolvedAt       DateTime?  @map("resolved_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  winner User? @relation("GameWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  bets   Bet[]
+
+  @@index([status, endsAt])
+  @@map("games")
+}
+
+model Bet {
+  id             BigInt   @id @default(autoincrement()) @db.BigInt
+  userId         BigInt   @map("user_id") @db.BigInt
+  gameId         BigInt   @map("game_id") @db.BigInt
+  amountNanotons BigInt   @map("amount_nanotons") @db.BigInt
+  ticketStart    BigInt   @map("ticket_start") @db.BigInt
+  ticketEnd      BigInt   @map("ticket_end") @db.BigInt
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Restrict)
+
+  @@index([gameId, ticketStart, ticketEnd])
+  @@index([userId, gameId])
+  @@map("bets")
+}
