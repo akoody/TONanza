@@ -4,6 +4,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { ZodError } from "zod";
 import { env } from "./config/env.js";
 import { determineWinnerSchema, gameIdParamSchema, placeBetSchema } from "./game/game.schemas.js";
+import { userSyncSchema } from "./game/user.schemas.js";
 import { GameService } from "./game/game.service.js";
 import { prisma } from "./lib/prisma.js";
 import { RoundScheduler } from "./round/round.scheduler.js";
@@ -50,7 +51,11 @@ app.get("/health", async () => {
 });
 
 app.get("/v1/games/active", async (_request, reply) => {
-  const openGame = await gameService.ensureOpenGameExists();
+  await gameService.ensureOpenGameExists();
+  const openGame = await gameService.getActiveGamePublicView();
+  if (!openGame) {
+    throw new AppError(500, "Failed to load active game");
+  }
 
   return reply.send(
     toJsonSafe({
@@ -59,6 +64,9 @@ app.get("/v1/games/active", async (_request, reply) => {
       status: openGame.status,
       totalPotNanotons: openGame.totalPotNanotons,
       nextTicket: openGame.nextTicket,
+      participantCount: openGame.participantCount,
+      countdownStarted: openGame.countdownStarted,
+      players: openGame.players,
       startsAt: openGame.startsAt,
       endsAt: openGame.endsAt
     })
@@ -70,6 +78,63 @@ app.post("/v1/bets", async (request, reply) => {
   const result = await gameService.placeBet(body.userId, body.amountNanotons);
 
   return reply.send(toJsonSafe(result));
+});
+
+app.post("/v1/users/sync", async (request, reply) => {
+  const body = userSyncSchema.parse(request.body);
+  const defaultBootstrapBalance =
+    env.NODE_ENV === "production" ? 0n : env.DEV_BOOTSTRAP_BALANCE_NANOTONS;
+
+  const user = await prisma.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({
+      where: {
+        telegramId: body.telegramId
+      }
+    });
+
+    if (existing) {
+      const shouldBootstrapInDev =
+        env.NODE_ENV !== "production" &&
+        defaultBootstrapBalance > 0n &&
+        existing.balanceNanotons === 0n;
+
+      if (body.walletAddress && existing.walletAddress !== body.walletAddress) {
+        return tx.user.update({
+          where: { id: existing.id },
+          data: {
+            walletAddress: body.walletAddress,
+            ...(shouldBootstrapInDev ? { balanceNanotons: defaultBootstrapBalance } : {})
+          }
+        });
+      }
+
+      if (shouldBootstrapInDev) {
+        return tx.user.update({
+          where: { id: existing.id },
+          data: { balanceNanotons: defaultBootstrapBalance }
+        });
+      }
+
+      return existing;
+    }
+
+    return tx.user.create({
+      data: {
+        telegramId: body.telegramId,
+        walletAddress: body.walletAddress,
+        balanceNanotons: defaultBootstrapBalance
+      }
+    });
+  });
+
+  return reply.send(
+    toJsonSafe({
+      id: user.id,
+      telegramId: user.telegramId,
+      walletAddress: user.walletAddress,
+      balanceNanotons: user.balanceNanotons
+    })
+  );
 });
 
 app.post("/v1/games/:gameId/resolve", async (request, reply) => {

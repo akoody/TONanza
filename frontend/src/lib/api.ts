@@ -1,11 +1,11 @@
-import type { ActiveGameResponse, PlaceBetResponse, ResolveResponse } from "../types";
+import type { ActiveGameResponse, PlaceBetResponse, ResolveResponse, UserSyncResponse } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 const readJson = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
     const maybeError = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(maybeError.message || "Request failed");
+    throw new Error(maybeError.message || "Ошибка запроса");
   }
 
   return (await response.json()) as T;
@@ -14,6 +14,21 @@ const readJson = async <T>(response: Response): Promise<T> => {
 export const getActiveGame = async (): Promise<ActiveGameResponse> => {
   const response = await fetch(`${API_BASE}/v1/games/active`);
   return readJson<ActiveGameResponse>(response);
+};
+
+export const syncUser = async (payload: {
+  telegramId: string;
+  walletAddress?: string;
+}): Promise<UserSyncResponse> => {
+  const response = await fetch(`${API_BASE}/v1/users/sync`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  return readJson<UserSyncResponse>(response);
 };
 
 export const placeBet = async (payload: {

@@ -11,6 +11,12 @@ export type ActiveGameResponse = {
   status: "OPEN" | "LOCKED" | "FINISHED" | "CANCELLED";
   totalPotNanotons: string;
   nextTicket: string;
+  participantCount: number;
+  countdownStarted: boolean;
+  players: Array<{
+    userId: string;
+    amountNanotons: string;
+  }>;
   startsAt: string;
   endsAt: string;
 };
@@ -23,6 +29,9 @@ export type PlaceBetResponse = {
   ticketStart: string;
   ticketEnd: string;
   totalPotNanotons: string;
+  userBalanceNanotons: string;
+  participantCount: number;
+  countdownStarted: boolean;
   endsAt: string;
 };
 
@@ -45,8 +54,23 @@ export type ResolveResponse = {
   } | null;
 };
 
+export type UserSyncResponse = {
+  id: string;
+  telegramId: string;
+  walletAddress: string | null;
+  balanceNanotons: string;
+};
+
 export type LiveEvent = {
   id: string;
   text: string;
   createdAt: number;
+  type?: "bet" | "win" | "info";
+  data?: {
+    userId?: string;
+    username?: string;
+    amountNanotons?: string;
+    payoutNanotons?: string;
+    isUser?: boolean;
+  };
 };

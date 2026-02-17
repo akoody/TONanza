@@ -12,6 +12,8 @@ import {
 const SERVICE_FEE_BPS = 500n; // 5% fee in basis points.
 const BPS_DIVISOR = 10_000n;
 const GAME_LOCK_KEY = 7_407_026;
+const MIN_PLAYERS_TO_START = 2;
+const PARKED_ROUND_MS = 365 * 24 * 60 * 60 * 1000;
 
 type LockedUserRow = {
   id: bigint;
@@ -23,6 +25,7 @@ type LockedGameRow = {
   status: GameStatus;
   total_pot_nanotons: bigint;
   next_ticket: bigint;
+  starts_at: Date;
   ends_at: Date;
   server_seed: string;
   server_seed_hash: string;
@@ -55,7 +58,7 @@ export class GameService {
         }
 
         const now = new Date();
-        const endsAt = new Date(now.getTime() + this.options.roundDurationSeconds * 1000);
+        const parkedUntil = new Date(now.getTime() + PARKED_ROUND_MS);
         const serverSeed = generateServerSeed();
         const serverSeedHash = hashSeed(serverSeed);
 
@@ -63,7 +66,8 @@ export class GameService {
           data: {
             serverSeed,
             serverSeedHash,
-            endsAt,
+            startsAt: parkedUntil,
+            endsAt: parkedUntil,
             status: GameStatus.OPEN,
             totalPotNanotons: 0n,
             commission: 0n,
@@ -92,7 +96,21 @@ export class GameService {
       }
     });
 
-    return game;
+    if (!game) {
+      return null;
+    }
+
+    const participantCount = await this.countDistinctPlayers(this.prisma, game.id);
+    const players = await this.getRoundPlayers(this.prisma, game.id);
+    const countdownStarted =
+      this.isCountdownStarted(game.startsAt) && participantCount >= MIN_PLAYERS_TO_START;
+
+    return {
+      ...game,
+      participantCount,
+      countdownStarted,
+      players
+    };
   }
 
   async placeBet(userId: bigint, amountNanotons: bigint) {
@@ -103,7 +121,7 @@ export class GameService {
     const result = await this.prisma.$transaction(
       async (tx) => {
         const [lockedGame] = await tx.$queryRaw<LockedGameRow[]>(Prisma.sql`
-          SELECT id, status, total_pot_nanotons, next_ticket, ends_at, server_seed, server_seed_hash
+          SELECT id, status, total_pot_nanotons, next_ticket, starts_at, ends_at, server_seed, server_seed_hash
           FROM games
           WHERE status = 'OPEN'
           ORDER BY id DESC
@@ -115,7 +133,12 @@ export class GameService {
           throw new AppError(409, "No active round found");
         }
 
-        if (lockedGame.ends_at <= new Date()) {
+        const now = new Date();
+        const participantCountBefore = await this.countDistinctPlayers(tx, lockedGame.id);
+        const countdownStarted =
+          this.isCountdownStarted(lockedGame.starts_at, now) &&
+          participantCountBefore >= MIN_PLAYERS_TO_START;
+        if (countdownStarted && lockedGame.ends_at <= now) {
           throw new AppError(409, "Round is closing, try in the next round");
         }
 
@@ -158,13 +181,26 @@ export class GameService {
           }
         });
 
+        const participantCount = await this.countDistinctPlayers(tx, lockedGame.id);
+        const shouldStartCountdown = !countdownStarted && participantCount >= MIN_PLAYERS_TO_START;
+        const startedAt = shouldStartCountdown ? now : undefined;
+        const endsAt = shouldStartCountdown
+          ? new Date(now.getTime() + this.options.roundDurationSeconds * 1000)
+          : undefined;
+
         const updatedGame = await tx.game.update({
           where: { id: lockedGame.id },
           data: {
             totalPotNanotons: {
               increment: amountNanotons
             },
-            nextTicket: ticketEnd + 1n
+            nextTicket: ticketEnd + 1n,
+            ...(startedAt && endsAt
+              ? {
+                  startsAt: startedAt,
+                  endsAt
+                }
+              : {})
           }
         });
 
@@ -176,6 +212,11 @@ export class GameService {
           ticketStart: bet.ticketStart,
           ticketEnd: bet.ticketEnd,
           totalPotNanotons: updatedGame.totalPotNanotons,
+          userBalanceNanotons: lockedUser.balance_nanotons - amountNanotons,
+          participantCount,
+          countdownStarted:
+            this.isCountdownStarted(updatedGame.startsAt) &&
+            participantCount >= MIN_PLAYERS_TO_START,
           endsAt: updatedGame.endsAt
         };
       },
@@ -247,6 +288,32 @@ export class GameService {
             totalPotNanotons: cancelled.totalPotNanotons,
             proof: null
           };
+        }
+
+        let expectedNextTicket = 1n;
+        let totalBetsNanotons = 0n;
+        for (const bet of bets) {
+          if (bet.amountNanotons <= 0n) {
+            throw new AppError(500, "Corrupted bet amount detected");
+          }
+          if (bet.ticketStart !== expectedNextTicket) {
+            throw new AppError(500, "Ticket sequence is corrupted");
+          }
+
+          const expectedTicketEnd = bet.ticketStart + bet.amountNanotons - 1n;
+          if (bet.ticketEnd !== expectedTicketEnd) {
+            throw new AppError(500, "Ticket range is inconsistent with bet amount");
+          }
+
+          expectedNextTicket = bet.ticketEnd + 1n;
+          totalBetsNanotons += bet.amountNanotons;
+        }
+
+        if (expectedNextTicket !== lockedGame.next_ticket) {
+          throw new AppError(500, "Game next ticket is inconsistent with bet ranges");
+        }
+        if (totalBetsNanotons !== lockedGame.total_pot_nanotons) {
+          throw new AppError(500, "Game total pot is inconsistent with aggregated bets");
         }
 
         const totalTickets = lockedGame.next_ticket - 1n;
@@ -376,5 +443,44 @@ export class GameService {
 
   private emit(event: string, payload: unknown) {
     this.options.io?.emit(event, toJsonSafe(payload));
+  }
+
+  private isCountdownStarted(startsAt: Date, now = new Date()): boolean {
+    return startsAt.getTime() <= now.getTime();
+  }
+
+  private async countDistinctPlayers(
+    client: PrismaClient | Prisma.TransactionClient,
+    gameId: bigint
+  ): Promise<number> {
+    const rows = await client.$queryRaw<Array<{ count: bigint | number }>>(Prisma.sql`
+      SELECT COUNT(DISTINCT user_id)::bigint AS count
+      FROM bets
+      WHERE game_id = ${gameId}
+    `);
+
+    const rawCount = rows[0]?.count ?? 0;
+    return Number(rawCount);
+  }
+
+  private async getRoundPlayers(
+    client: PrismaClient | Prisma.TransactionClient,
+    gameId: bigint
+  ): Promise<Array<{ userId: bigint; amountNanotons: bigint }>> {
+    const grouped = await client.bet.groupBy({
+      by: ["userId"],
+      where: { gameId },
+      _sum: {
+        amountNanotons: true
+      },
+      orderBy: [{ _sum: { amountNanotons: "desc" } }, { userId: "asc" }]
+    });
+
+    return grouped
+      .map((row) => ({
+        userId: row.userId,
+        amountNanotons: row._sum.amountNanotons ?? 0n
+      }))
+      .filter((row) => row.amountNanotons > 0n);
   }
 }

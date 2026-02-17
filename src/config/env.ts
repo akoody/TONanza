@@ -5,11 +5,12 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().min(1),
-  ROUND_DURATION_SECONDS: z.coerce.number().int().positive().default(90),
+  ROUND_DURATION_SECONDS: z.coerce.number().int().positive().default(40),
   APP_WALLET_ADDRESS: z.string().min(1),
   TONCENTER_BASE_URL: z.string().url().default("https://toncenter.com/api/v2/jsonRPC"),
   TONCENTER_API_KEY: z.string().default(""),
-  WATCHER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(12000)
+  WATCHER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(12000),
+  DEV_BOOTSTRAP_BALANCE_NANOTONS: z.coerce.bigint().nonnegative().default(100_000_000_000n)
 });
 
 export const env = envSchema.parse(process.env);

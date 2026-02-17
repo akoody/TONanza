@@ -32,7 +32,7 @@ export const formatNanotonsCompact = (value: bigint): string => {
     return `${(ton / 1000).toFixed(2)}K TON`;
   }
 
-  return `${ton.toFixed(3)} TON`;
+  return `${ton.toFixed(2)} TON`;
 };
 
 export const randomColorByUserId = (userId: string): string => {

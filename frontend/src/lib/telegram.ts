@@ -28,6 +28,10 @@ export const hapticImpactLight = () => {
   safeHaptic(() => WebApp.HapticFeedback.impactOccurred("light"));
 };
 
+export const hapticImpactMedium = () => {
+  safeHaptic(() => WebApp.HapticFeedback.impactOccurred("medium"));
+};
+
 export const hapticSelectionChanged = () => {
   safeHaptic(() => WebApp.HapticFeedback.selectionChanged());
 };

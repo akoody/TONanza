@@ -49,6 +49,7 @@ All balance/amount/pot/commission fields are `BigInt` nanotons.
 - `GET /health`
 - `GET /v1/games/active`
 - `POST /v1/bets` body: `{ "userId": "...", "amountNanotons": "..." }`
+- `POST /v1/users/sync` body: `{ "telegramId": "..." }`
 - `POST /v1/games/:gameId/resolve` body: `{ "clientSeed": "optional" }`
 - `GET /v1/games/:gameId/fairness`
 - `POST /v1/watcher/poll`
@@ -125,4 +126,7 @@ npm run prisma:migrate
 - `Wallet watcher poll failed ... Unexpected end of JSON input`:
   - set `TONCENTER_BASE_URL` to `https://toncenter.com/api/v2/jsonRPC`;
   - set a real `APP_WALLET_ADDRESS` (not `EQ...` placeholder).
-# TONanza
+
+- Bets fail with `User not found` / `Insufficient balance` in local dev:
+  - frontend now calls `POST /v1/users/sync` to auto-create/sync user by Telegram ID;
+  - for local testing, bootstrap balance is controlled by `DEV_BOOTSTRAP_BALANCE_NANOTONS`.

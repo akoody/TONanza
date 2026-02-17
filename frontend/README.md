@@ -9,9 +9,13 @@ npm install
 npm run dev
 ```
 
-By default, requests use same-origin paths (`/v1`, `/socket.io`).
-For custom backend URL set:
+Set backend URLs in env:
 
 ```bash
-VITE_API_BASE_URL=https://your-api.example.com
+VITE_API_BASE_URL=http://localhost:3000
+VITE_SOCKET_URL=http://localhost:3000
 ```
+
+Notes:
+- `VITE_SOCKET_URL` is used for Socket.io and avoids Vite WS proxy errors (`EPIPE`, `ECONNRESET`) in local dev.
+- If `VITE_SOCKET_URL` is omitted, frontend falls back to `VITE_API_BASE_URL`.
