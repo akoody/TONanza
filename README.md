@@ -11,7 +11,7 @@ The project is built as a full-stack TypeScript product: a mobile-first Telegram
 - Socket.IO for live game state and chat updates
 - Telegram Mini Apps / Telegram WebApp SDK
 - TON wallet, deposit watcher, and payout service modules
-- React 19, Vite, Tailwind/PostCSS
+- React 18, Vite, Tailwind/PostCSS
 - Docker and Docker Compose for deployment
 
 ## Product Scope
@@ -23,7 +23,7 @@ The project is built as a full-stack TypeScript product: a mobile-first Telegram
 - TON payment/deposit UX for Telegram Mini App users
 - Referral and onboarding flows
 - Admin/moderation foundations for chat and operational control
-- Production-oriented repository setup: Docker, env examples, docs, and audit/build checks
+- Production-oriented repository setup: Docker, env examples, docs, and build checks
 
 ## Repository Layout
 
@@ -98,10 +98,19 @@ Backend variables:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `FRONTEND_URL` | Public Telegram Mini App URL |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token for Mini App auth and bot entry points |
-| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs with admin access |
-| `CORS_ORIGINS` | Extra allowed frontend origins |
-| `UPLOAD_DIR` | Local upload directory |
-| `MAX_UPLOAD_MB` | Upload limit per file, max `25` |
+| `TELEGRAM_AUTH_MAX_AGE_SECONDS` | Max accepted Telegram WebApp auth age |
+| `ROUND_DURATION_SECONDS` | Jackpot round duration |
+| `GAME_RAKE_BPS` | Game rake in basis points |
+| `MIN_BET_NANOTONS` | Minimum bet amount in nanotons |
+| `DEV_BOOTSTRAP_BALANCE_NANOTONS` | Local development bootstrap balance |
+| `APP_WALLET_ADDRESS` | TON wallet watched for deposits |
+| `APP_WALLET_MNEMONIC` | Optional payout wallet mnemonic |
+| `TONCENTER_BASE_URL` | TON Center JSON-RPC endpoint |
+| `TONCENTER_API_KEY` | Optional TON Center API key |
+| `WATCHER_*` | Deposit watcher polling, catch-up, lock, and recovery settings |
+| `HTTP_RATE_LIMIT_*` | HTTP rate-limit settings |
+| `SOCKET_*` | Socket.IO buffer and rate-limit settings |
+| `CHAT_*` | Chat moderation, cooldown, history, and admin settings |
 
 Frontend variables:
 
@@ -114,8 +123,6 @@ Frontend variables:
 
 ```bash
 npm run check
-npm audit --omit=dev
-npm --prefix frontend audit --omit=dev
 ```
 
 `npm run check` runs backend type checking and a production frontend build.

@@ -1,12 +1,33 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>TONanza</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>TONanza Джекпот PvP</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Megrim&family=Zen+Dots&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div id="root"></div>
+  <!-- Instant splash: hides the app until React BootScreen takes over -->
+  <div id="static-splash" style="
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(to bottom, #042f2e, #083344, #042f2e);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  ">
+  </div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
 </html>

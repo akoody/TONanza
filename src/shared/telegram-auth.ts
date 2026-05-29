@@ -1,102 +1,83 @@
-import crypto from "node:crypto";
-import { AppError } from "./errors.js";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type TelegramUserPayload = {
-  id: number;
-  username?: string;
-  first_name?: string;
-  last_name?: string;
-  photo_url?: string;
-};
+interface TelegramUser {
+    id: number;
+    first_name: string;
+    last_name?: string;
+    username?: string;
+    language_code?: string;
+    is_premium?: boolean;
+    allows_write_to_pm?: boolean;
+}
 
-export type TelegramAuthContext = {
-  telegramId: bigint;
-  username: string | null;
-  firstName: string | null;
-  lastName: string | null;
-  avatarUrl: string | null;
-};
+interface ValidatedData {
+    user: TelegramUser;
+    auth_date: number;
+    [key: string]: any;
+}
 
-const parseInitData = (initData: string): URLSearchParams => {
-  try {
-    return new URLSearchParams(initData);
-  } catch {
-    throw new AppError(401, "Некорректные данные Telegram", "INVALID_TELEGRAM_INIT_DATA");
-  }
-};
+/**
+ * Validates the Telegram WebApp initData string.
+ *
+ * @param initData The raw initData string from WebApp.initData
+ * @param botToken The Telegram Bot Token
+ * @param maxAgeSeconds Maximum age for auth_date to mitigate replay attacks
+ * @returns The parsed data object if valid, or null if invalid
+ */
+export function validateTelegramWebAppData(
+    initData: string,
+    botToken: string,
+    maxAgeSeconds: number = 24 * 60 * 60
+): ValidatedData | null {
+    if (!initData || !botToken) return null;
 
-const validateSignature = (initData: string, botToken: string): URLSearchParams => {
-  const params = parseInitData(initData);
-  const hash = params.get("hash");
-  if (!hash) {
-    throw new AppError(401, "Нет подписи Telegram", "MISSING_TELEGRAM_HASH");
-  }
+    const urlParams = new URLSearchParams(initData);
+    const hash = urlParams.get("hash");
+    if (!hash) return null;
 
-  const pairs: string[] = [];
-  params.forEach((value, key) => {
-    if (key !== "hash") pairs.push(`${key}=${value}`);
-  });
-  pairs.sort();
+    urlParams.delete("hash");
 
-  const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
-  const calculated = crypto.createHmac("sha256", secret).update(pairs.join("\n")).digest("hex");
+    const dataCheckString = Array.from(urlParams.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n");
 
-  const left = Buffer.from(calculated, "hex");
-  const right = Buffer.from(hash, "hex");
-  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
-    throw new AppError(401, "Неверная подпись Telegram", "INVALID_TELEGRAM_SIGNATURE");
-  }
-
-  return params;
-};
-
-const asStringOrNull = (value: unknown, maxLength: number): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.slice(0, maxLength);
-};
-
-export const resolveTelegramAuth = (headers: Record<string, unknown>, botToken?: string): TelegramAuthContext => {
-  const bypass = headers["x-bypass-auth"] === "true";
-  if (bypass && process.env.NODE_ENV !== "production") {
-    const rawId = String(headers["x-dev-user-id"] ?? "100000001");
-    if (!/^[1-9]\d*$/.test(rawId)) {
-      throw new AppError(401, "Некорректный dev Telegram ID", "INVALID_DEV_USER");
+    const secretKey = createHmac("sha256", "WebAppData").update(botToken).digest();
+    const calculatedHash = createHmac("sha256", secretKey).update(dataCheckString).digest();
+    const receivedHash = Buffer.from(hash, "hex");
+    if (receivedHash.length !== calculatedHash.length || !timingSafeEqual(calculatedHash, receivedHash)) {
+        return null;
     }
-    return {
-      telegramId: BigInt(rawId),
-      username: "dev_user",
-      firstName: "Dev",
-      lastName: null,
-      avatarUrl: null
-    };
-  }
 
-  const initData = headers["x-telegram-init-data"];
-  if (typeof initData !== "string" || initData.length === 0) {
-    throw new AppError(401, "Откройте приложение через Telegram", "TELEGRAM_AUTH_REQUIRED");
-  }
-  if (!botToken) {
-    throw new AppError(500, "TELEGRAM_BOT_TOKEN не настроен", "BOT_TOKEN_REQUIRED");
-  }
+    const userString = urlParams.get("user");
+    const authDate = parseInt(urlParams.get("auth_date") || "0", 10);
+    if (!Number.isFinite(authDate) || authDate <= 0) return null;
+    if (maxAgeSeconds > 0) {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        if (authDate > nowSeconds + 60) return null;
+        if (nowSeconds - authDate > maxAgeSeconds) return null;
+    }
 
-  const params = validateSignature(initData, botToken);
-  const rawUser = params.get("user");
-  if (!rawUser) {
-    throw new AppError(401, "Нет пользователя Telegram", "TELEGRAM_USER_REQUIRED");
-  }
+    if (!userString) return null;
 
-  const user = JSON.parse(rawUser) as TelegramUserPayload;
-  if (!Number.isSafeInteger(user.id) || user.id <= 0) {
-    throw new AppError(401, "Некорректный пользователь Telegram", "INVALID_TELEGRAM_USER");
-  }
+    try {
+        const user = JSON.parse(userString) as TelegramUser;
+        if (!Number.isInteger(user.id) || user.id <= 0) return null;
 
-  return {
-    telegramId: BigInt(user.id),
-    username: asStringOrNull(user.username, 64),
-    firstName: asStringOrNull(user.first_name, 128),
-    lastName: asStringOrNull(user.last_name, 128),
-    avatarUrl: asStringOrNull(user.photo_url, 512)
-  };
-};
+        const result: ValidatedData = {
+            user,
+            auth_date: authDate
+        };
+
+        // Add other params
+        urlParams.forEach((val, key) => {
+            if (key !== "user" && key !== "auth_date") {
+                result[key] = val;
+            }
+        });
+
+        return result;
+    } catch {
+        return null;
+    }
+}

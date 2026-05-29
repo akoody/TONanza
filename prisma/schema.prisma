@@ -7,99 +7,145 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum DealRole {
-  BUYER
-  SELLER
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  FAILED
 }
 
-enum DealStatus {
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  BROADCASTED
+  COMPLETED
+  FAILED
+}
+
+enum GameStatus {
   OPEN
-  WAITING_PAYMENT
-  IN_PROGRESS
-  CLOSED
-}
-
-enum DealParticipantRole {
-  OWNER
-  MEMBER
-  ADMIN
-}
-
-enum ChatMessageKind {
-  TEXT
-  PHOTO
-  SYSTEM
-  REQUISITES
-  NOTIFICATION
+  LOCKED
+  FINISHED
+  CANCELLED
 }
 
 model User {
-  id         BigInt   @id @default(autoincrement()) @db.BigInt
-  telegramId BigInt   @unique @map("telegram_id") @db.BigInt
-  username   String?  @db.VarChar(64)
-  firstName  String?  @map("first_name") @db.VarChar(128)
-  lastName   String?  @map("last_name") @db.VarChar(128)
-  avatarUrl  String?  @map("avatar_url") @db.VarChar(512)
-  isAdmin    Boolean  @default(false) @map("is_admin")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id              BigInt   @id @default(autoincrement()) @db.BigInt
+  telegramId      BigInt   @unique @map("telegram_id") @db.BigInt
+  balanceNanotons BigInt   @default(0) @map("balance_nanotons") @db.BigInt
+  walletAddress   String?  @map("wallet_address") @db.VarChar(128)
+  username        String?  @db.VarChar(64)
+  avatarUrl               String?  @map("avatar_url") @db.VarChar(512)
+  referrerId              BigInt?  @map("referrer_id") @db.BigInt
+  referralBalanceNanotons BigInt   @default(0) @map("referral_balance_nanotons") @db.BigInt
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
-  ownedDeals    Deal[]            @relation("DealOwner")
-  participants  DealParticipant[]
-  messages      ChatMessage[]
+  referrer      User?        @relation("UserReferrals", fields: [referrerId], references: [id], onDelete: SetNull)
+  referredUsers User[]       @relation("UserReferrals")
+  deposits      Deposit[]
+  withdrawals   Withdrawal[]
+  bets          Bet[]
+  wonGames      Game[]       @relation("GameWinner")
 
   @@map("users")
 }
 
-model Deal {
-  id          BigInt     @id @default(autoincrement()) @db.BigInt
-  code        String     @unique @db.VarChar(12)
-  title       String     @db.VarChar(120)
-  terms       String     @db.VarChar(2000)
-  ownerRole   DealRole   @map("owner_role")
-  amountCents Int        @map("amount_cents")
-  status      DealStatus @default(OPEN)
-  ownerId     BigInt     @map("owner_id") @db.BigInt
-  closedAt    DateTime?  @map("closed_at")
-  createdAt   DateTime   @default(now()) @map("created_at")
-  updatedAt   DateTime   @updatedAt @map("updated_at")
+model Deposit {
+  id             BigInt        @id @default(autoincrement()) @db.BigInt
+  userId         BigInt?       @map("user_id") @db.BigInt
+  txHash         String        @unique @map("tx_hash") @db.VarChar(128)
+  amountNanotons BigInt        @map("amount_nanotons") @db.BigInt
+  status         DepositStatus @default(PENDING)
+  comment        String?       @db.VarChar(255)
+  sourceAddress  String?       @map("source_address") @db.VarChar(128)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  confirmedAt    DateTime?     @map("confirmed_at")
 
-  owner        User              @relation("DealOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  participants DealParticipant[]
-  messages     ChatMessage[]
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@index([title])
-  @@index([status, createdAt])
-  @@map("deals")
+  @@index([userId, status])
+  @@map("deposits")
 }
 
-model DealParticipant {
-  id        BigInt              @id @default(autoincrement()) @db.BigInt
-  dealId    BigInt              @map("deal_id") @db.BigInt
-  userId    BigInt              @map("user_id") @db.BigInt
-  role      DealParticipantRole
-  createdAt DateTime            @default(now()) @map("created_at")
+model Withdrawal {
+  id             BigInt           @id @default(autoincrement()) @db.BigInt
+  userId         BigInt           @map("user_id") @db.BigInt
+  amountNanotons BigInt           @map("amount_nanotons") @db.BigInt
+  status         WithdrawalStatus @default(PENDING)
+  txHash         String?          @map("tx_hash") @db.VarChar(128)
+  toAddress      String           @map("to_address") @db.VarChar(128)
+  notes          String?          @db.VarChar(255)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
 
-  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  @@unique([dealId, userId])
-  @@index([userId])
-  @@map("deal_participants")
+  @@index([userId, status])
+  @@map("withdrawals")
+}
+
+model Game {
+  id               BigInt     @id @default(autoincrement()) @db.BigInt
+  serverSeed       String     @map("server_seed") @db.VarChar(128)
+  serverSeedHash   String     @map("server_seed_hash") @db.VarChar(128)
+  clientSeed       String?    @map("client_seed") @db.VarChar(255)
+  winnerId         BigInt?    @map("winner_id") @db.BigInt
+  status           GameStatus @default(OPEN)
+  totalPotNanotons BigInt     @default(0) @map("total_pot_nanotons") @db.BigInt
+  commission       BigInt     @default(0) @db.BigInt
+  nextTicket       BigInt     @default(1) @map("next_ticket") @db.BigInt
+  startsAt         DateTime   @default(now()) @map("starts_at")
+  endsAt           DateTime   @map("ends_at")
+  resolvedAt       DateTime?  @map("resolved_at")
+  prizeClaimedAt   DateTime?  @map("prize_claimed_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  winner User? @relation("GameWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  bets   Bet[]
+
+  @@index([status, endsAt])
+  @@map("games")
+}
+
+model Bet {
+  id             BigInt   @id @default(autoincrement()) @db.BigInt
+  userId         BigInt   @map("user_id") @db.BigInt
+  gameId         BigInt   @map("game_id") @db.BigInt
+  amountNanotons BigInt   @map("amount_nanotons") @db.BigInt
+  ticketStart    BigInt   @map("ticket_start") @db.BigInt
+  ticketEnd      BigInt   @map("ticket_end") @db.BigInt
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Restrict)
+
+  @@index([gameId, ticketStart, ticketEnd])
+  @@index([userId, gameId])
+  @@map("bets")
 }
 
 model ChatMessage {
-  id        BigInt          @id @default(autoincrement()) @db.BigInt
-  dealId    BigInt          @map("deal_id") @db.BigInt
-  userId    BigInt?         @map("user_id") @db.BigInt
-  kind      ChatMessageKind @default(TEXT)
-  text      String?         @db.VarChar(2000)
-  photoUrl  String?         @map("photo_url") @db.VarChar(512)
-  createdAt DateTime        @default(now()) @map("created_at")
+  id        String   @id @db.VarChar(64)
+  userId    String   @map("user_id") @db.VarChar(64)
+  username  String   @db.VarChar(64)
+  avatarUrl String?  @map("avatar_url") @db.VarChar(512)
+  text      String   @db.VarChar(1024)
+  createdAt DateTime @default(now()) @map("created_at")
 
-  deal Deal  @relation(fields: [dealId], references: [id], onDelete: Cascade)
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([dealId, createdAt])
+  @@index([createdAt(sort: Desc)])
   @@map("chat_messages")
+}
+
+model WatcherState {
+  id            Int       @id @default(1)
+  walletAddress String    @unique @map("wallet_address") @db.VarChar(128)
+  lastSeenLt    BigInt    @default(0) @map("last_seen_lt") @db.BigInt
+  lastSeenHash  String?   @map("last_seen_hash") @db.VarChar(128)
+  lockOwner     String?   @map("lock_owner") @db.VarChar(128)
+  lockExpiresAt DateTime? @map("lock_expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("watcher_state")
 }

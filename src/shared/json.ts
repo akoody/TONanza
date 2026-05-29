@@ -1,6 +1,7 @@
-export const toJsonSafe = (value: unknown): unknown =>
-  JSON.parse(
-    JSON.stringify(value, (_key, current) =>
-      typeof current === "bigint" ? current.toString() : current
+export const toJsonSafe = <T>(value: T): T => {
+  return JSON.parse(
+    JSON.stringify(value, (_key, nestedValue) =>
+      typeof nestedValue === "bigint" ? nestedValue.toString() : nestedValue
     )
-  );
+  ) as T;
+};
