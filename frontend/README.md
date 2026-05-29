@@ -1,6 +1,6 @@
 # TONanza Mini App
 
-Telegram Mini App client for secure deal management.
+Telegram Mini App client for a TON jackpot casino game.
 
 ## Run
 

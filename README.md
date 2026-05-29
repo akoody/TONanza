@@ -1,34 +1,42 @@
 # TONanza
 
-TONanza is a Telegram Mini App for secure deal management. The backend validates Telegram WebApp init data, stores deals and chat history in PostgreSQL, streams deal updates through Socket.IO, and lets admins coordinate requisites, notifications, photos, and deal closure from a compact mobile UI.
+TONanza is a Telegram Mini App for a TON-based jackpot casino experience. Players enter fast PvP jackpot rounds, place TON-denominated bets, watch the live pot grow, and see the winner selected through a provably-fair round flow.
+
+The project is built as a full-stack TypeScript product: a mobile-first Telegram WebApp client, a Node.js backend, PostgreSQL persistence, Socket.IO realtime updates, TON wallet/deposit infrastructure, game history, referrals, and in-game chat.
 
 ## Stack
 
 - Node.js 20, TypeScript, Fastify
-- Prisma ORM and PostgreSQL
-- Telegraf for Telegram bot entry points
-- Socket.IO for real-time deal updates
+- PostgreSQL and Prisma ORM
+- Socket.IO for live game state and chat updates
+- Telegram Mini Apps / Telegram WebApp SDK
+- TON wallet, deposit watcher, and payout service modules
 - React 19, Vite, Tailwind/PostCSS
-- Docker Compose for local infrastructure and production backend runtime
+- Docker and Docker Compose for deployment
 
-## Features
+## Product Scope
 
-- Telegram WebApp authentication with HMAC signature validation
-- Admin allow-list through `ADMIN_TELEGRAM_IDS`
-- Deal creation with short shareable codes
-- Participant auto-join by deal code
-- Persistent deal chat with text and image messages
-- Admin-only requisites, notifications, and close actions
-- Real-time updates per deal room
-- Local dev auth bypass outside production
+- Jackpot PvP game loop with active rounds and winner history
+- TON-denominated betting UI with compact mobile controls
+- Provably-fair seed utilities for transparent winner selection
+- Real-time pot, players, roulette, chat, and round-state updates
+- TON payment/deposit UX for Telegram Mini App users
+- Referral and onboarding flows
+- Admin/moderation foundations for chat and operational control
+- Production-oriented repository setup: Docker, env examples, docs, and audit/build checks
 
 ## Repository Layout
 
 ```text
 .
-├── src/                  # Fastify API, Telegram bot, domain services
+├── src/
+│   ├── game/             # Jackpot round and provably-fair game domain
+│   ├── wallet/           # TON deposit, entropy, and payout services
+│   ├── chat/             # In-game chat schemas, moderation, persistence
+│   ├── bot/              # Telegram bot integration
+│   └── server.ts         # Fastify application entrypoint
+├── frontend/             # Telegram Mini App casino client
 ├── prisma/               # Prisma schema and migrations
-├── frontend/             # Telegram Mini App client
 ├── Dockerfile            # Production backend image
 ├── docker-compose.yml    # PostgreSQL + backend runtime
 └── deploy.sh             # Optional SSH deploy helper
@@ -62,7 +70,7 @@ cp .env.example .env
 cp frontend/.env.example frontend/.env
 ```
 
-Run migrations and generate Prisma client:
+Generate Prisma client and run migrations:
 
 ```bash
 npm run prisma:generate
@@ -76,8 +84,6 @@ npm run dev
 npm run frontend:dev
 ```
 
-For browser-based local preview, the frontend sends `x-bypass-auth` only outside production. Real Telegram sessions use `X-Telegram-Init-Data` and require `TELEGRAM_BOT_TOKEN`.
-
 ## Environment
 
 Backend variables:
@@ -90,11 +96,11 @@ Backend variables:
 | `POSTGRES_PASSWORD` | PostgreSQL password for Docker Compose |
 | `POSTGRES_DB` | PostgreSQL database for Docker Compose |
 | `DATABASE_URL` | PostgreSQL connection string |
-| `FRONTEND_URL` | Public Mini App URL used by the bot |
-| `TELEGRAM_BOT_TOKEN` | Bot token used for auth validation and notifications |
+| `FRONTEND_URL` | Public Telegram Mini App URL |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token for Mini App auth and bot entry points |
 | `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs with admin access |
 | `CORS_ORIGINS` | Extra allowed frontend origins |
-| `UPLOAD_DIR` | Local image upload directory |
+| `UPLOAD_DIR` | Local upload directory |
 | `MAX_UPLOAD_MB` | Upload limit per file, max `25` |
 
 Frontend variables:
@@ -108,9 +114,11 @@ Frontend variables:
 
 ```bash
 npm run check
+npm audit --omit=dev
+npm --prefix frontend audit --omit=dev
 ```
 
-The check command runs backend type checking and a production frontend build.
+`npm run check` runs backend type checking and a production frontend build.
 
 ## Docker
 
@@ -126,7 +134,7 @@ Apply migrations inside the backend container:
 docker compose --env-file .env exec backend npx prisma migrate deploy
 ```
 
-The frontend is intentionally built as a static artifact and can be served by Nginx, CDN, or any static host.
+The frontend builds into static assets and can be served by Nginx, CDN, or any static host.
 
 ## Deployment Helper
 
@@ -139,4 +147,4 @@ PUBLIC_ORIGIN="https://tonanza.example" \
 ./deploy.sh
 ```
 
-Production should keep secrets in `.env` or the deployment platform secret store. `.env` files are ignored by git.
+Production secrets belong in `.env` or a deployment platform secret store. `.env` files are ignored by git.

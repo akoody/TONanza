@@ -1,43 +1,74 @@
 # Architecture
 
-## Runtime Boundary
+## Product Boundary
 
-TONanza is split into two deployable parts:
+TONanza is a Telegram Mini App jackpot casino built around a mobile-first real-time game loop:
 
-- `src/server.ts` starts the Fastify API, registers CORS, uploads, static file serving, Socket.IO, and Telegram bot lifecycle hooks.
-- `frontend/src/main.tsx` starts the Telegram Mini App client. The frontend talks to the backend over REST and subscribes to deal-scoped Socket.IO rooms.
+- The frontend renders the jackpot table, betting dock, roulette, player list, game history, chat, referrals, onboarding, and TON payment modals.
+- The backend owns persistence, Telegram identity, game services, wallet services, chat moderation, and realtime delivery.
+- Socket.IO is used for live state delivery so the UI can react immediately to bets, round transitions, chat messages, and balance-related updates.
 
-The backend is the source of truth for authentication, permissions, deal state, message history, and uploaded image paths. The frontend is a thin mobile client with optimistic-free state updates.
+## Core Domains
 
-## Backend Flow
+### Game
 
-1. Every API request resolves the viewer through `resolveTelegramAuth`.
-2. `DealService.upsertUser` syncs Telegram profile fields and admin status.
-3. Deal operations validate input with Zod schemas before touching persistence.
-4. Prisma writes the canonical state to PostgreSQL.
-5. Mutating deal operations emit a `deal:update` event to `deal:{code}` Socket.IO room.
+The `src/game` domain contains the jackpot service layer and provably-fair helpers. The game flow is designed around:
 
-This keeps realtime delivery disposable: if a socket event is missed, the client can reload the deal by code and get the full canonical state.
+1. Opening an active round.
+2. Accepting TON-denominated bets.
+3. Tracking players, tickets, and pot size.
+4. Resolving the round with deterministic seed-based winner selection.
+5. Persisting round history for transparency and UI history views.
 
-## Data Model
+### Wallet
 
-The active Prisma model is intentionally small:
+The `src/wallet` domain contains TON-specific infrastructure:
 
-- `User` mirrors Telegram identity and admin status.
-- `Deal` stores title, terms, amount, owner role, status, and close timestamp.
-- `DealParticipant` links users to deals with owner/member/admin roles.
-- `ChatMessage` stores text, photos, system events, requisites, and admin notifications.
+- deposit watcher logic,
+- TON entropy helper,
+- payout service foundations,
+- idempotent transaction handling patterns.
 
-BigInt IDs are serialized to strings before crossing the API boundary.
+Money-like values are represented as integer nanotons in game and wallet modules to avoid floating-point precision errors.
+
+### Realtime
+
+The realtime layer is responsible for pushing game state, user state, and chat events to Telegram Mini App clients. Socket.IO rooms keep high-frequency UI updates separate from normal REST operations.
+
+### Telegram
+
+Telegram integration covers:
+
+- Mini App initialization,
+- Telegram WebApp auth data validation,
+- bot entry points,
+- Telegram-native haptics and mobile UX behavior on the frontend.
+
+### Chat and Moderation
+
+The chat domain provides schemas, persistence, basic moderation hooks, rate-limit foundations, and UI components for the in-game chat panel.
+
+## Frontend Structure
+
+The frontend is built with React and Vite. The main product surface is composed from focused UI modules:
+
+- `BettingDock` for TON bet placement controls,
+- `Roulette` for winner reveal animation,
+- `ParticipantsList` and `BetList` for live round visibility,
+- `GameHeader` and `HistoryRibbon` for current and previous rounds,
+- `PaymentModal` for TON deposit UX,
+- `GameChat` for live player communication,
+- `ReferralModal`, `MenuModal`, `WelcomeScreen`, and `TermsOfUseModal` for supporting product flows.
 
 ## Security Notes
 
-- Telegram WebApp signatures are validated server-side with the bot token.
-- Development auth bypass is disabled in production.
-- CORS is origin-checked against configured frontend origins.
-- Admin capabilities are based on `ADMIN_TELEGRAM_IDS`, not frontend state.
-- Uploaded files are limited by MIME prefix, extension allow-list, count, and size.
+- Telegram WebApp signatures should be validated server-side with the bot token.
+- Development auth bypass must stay disabled in production.
+- CORS is restricted to configured frontend origins.
+- Admin capabilities are based on server-side Telegram IDs.
+- File uploads and chat messages should remain bounded by size, MIME/type validation, and rate limits.
+- TON deposits and payouts require idempotency keys and integer-only balance mutations.
 
-## Build Surface
+## Operational Notes
 
-The repository still contains historical modules from earlier product experiments. The production TypeScript build is scoped to `src/server.ts`, which pulls in the currently wired runtime dependencies. This keeps the release path strict without pretending unrelated experimental code is part of the active backend.
+The repository includes Docker, Compose, env examples, migration files, and deploy helper scripts so the project can be reviewed and deployed without machine-specific setup. Build and audit commands are documented in the README and should be run before every release.
