@@ -1,6 +1,6 @@
-# TONanza Frontend
+# TONanza Mini App
 
-Telegram Mini App client for Jackpot PvP.
+Telegram Mini App client for secure deal management.
 
 ## Run
 
@@ -17,5 +17,5 @@ VITE_SOCKET_URL=http://localhost:3000
 ```
 
 Notes:
-- `VITE_SOCKET_URL` is used for Socket.io and avoids Vite WS proxy errors (`EPIPE`, `ECONNRESET`) in local dev.
+- `VITE_SOCKET_URL` is used for Socket.IO and avoids Vite WS proxy errors (`EPIPE`, `ECONNRESET`) in local dev.
 - If `VITE_SOCKET_URL` is omitted, frontend falls back to `VITE_API_BASE_URL`.

@@ -1,64 +1,84 @@
-import type { ActiveGameResponse, PlaceBetResponse, ResolveResponse, UserSyncResponse } from "../types";
+import type { Deal, DealListItem, DealRole, User } from "../types";
+import { authHeaders, multipartAuthHeaders } from "./telegram";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
 
 const readJson = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
-    const maybeError = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(maybeError.message || "Ошибка запроса");
+    const errorBody = await response.json().catch(() => ({ message: response.statusText }));
+    throw new Error(errorBody.message || "Ошибка запроса");
   }
-
   return (await response.json()) as T;
 };
 
-export const getActiveGame = async (): Promise<ActiveGameResponse> => {
-  const response = await fetch(`${API_BASE}/v1/games/active`);
-  return readJson<ActiveGameResponse>(response);
+export const getMe = async () => {
+  const response = await fetch(`${API_BASE}/v1/me`, { headers: authHeaders() });
+  return readJson<User>(response);
 };
 
-export const syncUser = async (payload: {
-  telegramId: string;
-  walletAddress?: string;
-}): Promise<UserSyncResponse> => {
-  const response = await fetch(`${API_BASE}/v1/users/sync`, {
+export const listDeals = async (q = "") => {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
+  const response = await fetch(`${API_BASE}/v1/deals?${params.toString()}`, { headers: authHeaders() });
+  return readJson<DealListItem[]>(response);
+};
+
+export const createDeal = async (payload: {
+  title: string;
+  terms: string;
+  ownerRole: DealRole;
+  amount: number;
+}) => {
+  const response = await fetch(`${API_BASE}/v1/deals`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: authHeaders(),
     body: JSON.stringify(payload)
   });
-
-  return readJson<UserSyncResponse>(response);
+  return readJson<Deal>(response);
 };
 
-export const placeBet = async (payload: {
-  userId: string;
-  amountNanotons: string;
-}): Promise<PlaceBetResponse> => {
-  const response = await fetch(`${API_BASE}/v1/bets`, {
+export const getDeal = async (code: string) => {
+  const response = await fetch(`${API_BASE}/v1/deals/${encodeURIComponent(code)}`, { headers: authHeaders() });
+  return readJson<Deal>(response);
+};
+
+export const sendMessage = async (code: string, text: string) => {
+  const response = await fetch(`${API_BASE}/v1/deals/${encodeURIComponent(code)}/messages`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
+    headers: authHeaders(),
+    body: JSON.stringify({ text })
   });
-
-  return readJson<PlaceBetResponse>(response);
+  return readJson<Deal>(response);
 };
 
-export const resolveGame = async (gameId: string): Promise<ResolveResponse> => {
-  const response = await fetch(`${API_BASE}/v1/games/${gameId}/resolve`, {
+export const sendPhotos = async (code: string, files: File[]) => {
+  const body = new FormData();
+  files.slice(0, 10).forEach((file) => body.append("photos", file));
+  const response = await fetch(`${API_BASE}/v1/deals/${encodeURIComponent(code)}/photos`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: multipartAuthHeaders(),
+    body
+  });
+  return readJson<Deal>(response);
+};
+
+export const sendRequisites = async (code: string, text: string) => adminPost(code, "requisites", text);
+export const sendNotification = async (code: string, text: string) => adminPost(code, "notify", text);
+
+export const closeDeal = async (code: string) => {
+  const response = await fetch(`${API_BASE}/v1/deals/${encodeURIComponent(code)}/admin/close`, {
+    method: "POST",
+    headers: authHeaders(),
     body: JSON.stringify({})
   });
-
-  return readJson<ResolveResponse>(response);
+  return readJson<Deal>(response);
 };
 
-export const healthCheck = async () => {
-  const response = await fetch(`${API_BASE}/health`);
-  return readJson<{ ok: boolean }>(response);
+const adminPost = async (code: string, action: string, text: string) => {
+  const response = await fetch(`${API_BASE}/v1/deals/${encodeURIComponent(code)}/admin/${action}`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ text })
+  });
+  return readJson<Deal>(response);
 };

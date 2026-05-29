@@ -1,5 +1,5 @@
 {
-  "name": "tonanza-jackpot-pvp",
+  "name": "tonanza-api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,20 +7,22 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "typecheck": "tsc --noEmit",
-    "frontend:install": "npm --prefix frontend install",
     "frontend:dev": "npm --prefix frontend run dev",
-    "frontend:build": "npm --prefix frontend run build"
+    "frontend:build": "npm --prefix frontend run build",
+    "check": "npm run typecheck && npm run frontend:build"
   },
   "dependencies": {
-    "@fastify/cors": "^9.0.1",
+    "@fastify/cors": "^11.2.0",
+    "@fastify/multipart": "^10.0.0",
+    "@fastify/static": "^9.1.3",
     "@prisma/client": "^6.3.1",
     "dotenv": "^16.4.7",
-    "fastify": "^4.29.0",
+    "fastify": "^5.8.5",
     "socket.io": "^4.8.1",
-    "tonweb": "^0.0.66",
+    "telegraf": "^4.16.3",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -28,5 +30,6 @@
     "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
-  }
+  },
+  "overrides": {}
 }

@@ -1,8 +1,20 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Inter:wght@400;500;600;700;800;900&family=Kanit:wght@600;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=JetBrains+Mono:wght@500;700&family=Inter:wght@400;500;600;700;800;900&family=Kanit:wght@600;800;900&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.font-zen-dots {
+  font-family: 'Zen Dots', cursive;
+}
+
+.font-megrim {
+  font-family: 'Megrim', cursive;
+}
+
+.font-caveat {
+  font-family: 'Caveat', cursive;
+}
 
 :root {
   color-scheme: dark;
@@ -15,20 +27,123 @@
 html,
 body,
 #root {
-  margin: 0;
+  margin: 0 auto;
   min-height: 100%;
+  max-width: 448px;
   overflow: hidden;
+  overscroll-behavior: none;
   /* Prevent scrolling on mobile */
 }
 
 body {
   font-family: "Inter", "Kanit", ui-sans-serif, system-ui, sans-serif;
   @apply bg-slate-950 text-[#E0E0E0];
-  background-image: linear-gradient(to bottom, #042f2e, #155e75, #042f2e);
-  background-attachment: fixed;
+}
+
+/* Base background for outside the app boundaries */
+html {
+  background-color: #020617;
+  /* Very dark slate */
 }
 
 ::selection {
   background: rgba(236, 72, 153, 0.35);
   color: #f8fafc;
+}
+
+/* Hide native number controls that overlap custom quick buttons in the dock */
+.betting-number-input {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.betting-number-input::-webkit-outer-spin-button,
+.betting-number-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Hide visual scrollbars but keep scrolling functional */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  /* IE/Edge legacy */
+  scrollbar-width: none;
+  /* Firefox */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+  /* Chrome/Safari/Opera */
+}
+
+/* Slightly compact TonConnect button width in header */
+.wallet-connect-compact [data-tc-connect-button],
+.wallet-connect-compact [data-tc-connect-button-loading],
+.wallet-connect-compact [data-tc-dropdown-button] {
+  min-width: 140px !important;
+  width: 140px !important;
+  height: 40px !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  box-shadow: 0 4px 16px rgba(2, 6, 23, 0.5) !important;
+}
+
+.wallet-connect-compact [data-tc-connect-button]:hover,
+.wallet-connect-compact [data-tc-connect-button-loading]:hover,
+.wallet-connect-compact [data-tc-dropdown-button]:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Full-width TonConnect button for onboarding to avoid clipped labels on narrow screens */
+.wallet-connect-onboarding {
+  width: 100%;
+}
+
+.wallet-connect-onboarding [data-tc-connect-button],
+.wallet-connect-onboarding [data-tc-connect-button-loading],
+.wallet-connect-onboarding [data-tc-dropdown-button] {
+  width: 100% !important;
+  min-width: 100% !important;
+  height: 48px !important;
+  border-radius: 0.9rem !important;
+}
+
+/* iOS/Telegram WebView workaround: keyboard + backdrop-filter may render black frame. */
+body.input-focus-active .backdrop-blur-sm:not(.focus-blur-keep),
+body.input-focus-active .backdrop-blur-md:not(.focus-blur-keep),
+body.input-focus-active .backdrop-blur-xl:not(.focus-blur-keep),
+body.input-focus-active .backdrop-blur-2xl:not(.focus-blur-keep) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* iOS WebView keyboard workaround: reduce GPU compositing while any input is focused. */
+body.input-focus-active .transform-gpu {
+  transform: none !important;
+  will-change: auto !important;
+}
+
+body.input-focus-active {
+  background-color: #042f2e !important;
+  background-image: none !important;
+}
+
+/* Keep payment modal anchored to the bottom while keyboard is open */
+body.input-focus-active .payment-modal-overlay {
+  align-items: flex-end !important;
+  justify-content: center !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  overflow: hidden !important;
+}
+
+body.input-focus-active .payment-modal-card {
+  transform: none !important;
+  min-height: 72dvh;
+  max-height: calc(95dvh - max(env(safe-area-inset-bottom), 0.75rem));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }

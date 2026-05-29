@@ -1,13 +1,15 @@
 import { motion } from "framer-motion";
 import { cn } from "../lib/utils";
 import type { PlayerChance } from "../types";
+import { formatNanotonsCompact } from "../lib/format";
 
 interface ParticipantsListProps {
     players: PlayerChance[];
     totalPotNanotons: bigint;
+    currentUserId?: string;
 }
 
-export function ParticipantsList({ players, totalPotNanotons }: ParticipantsListProps) {
+export function ParticipantsList({ players, totalPotNanotons, currentUserId }: ParticipantsListProps) {
     if (players.length === 0) return null;
 
     return (
@@ -17,63 +19,50 @@ export function ParticipantsList({ players, totalPotNanotons }: ParticipantsList
                 <span className="bg-white/10 text-white px-1.5 py-0.5 rounded text-[10px]">{players.length}</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
                 {players.map((player, index) => {
                     const chance = totalPotNanotons > 0n
-                        ? Number((player.amountNanotons * 10000n) / totalPotNanotons) / 100
+                        ? Number((player.amountNanotons * 1000n) / totalPotNanotons) / 10
                         : 0;
 
-                    const isTop = index === 0 && players.length > 1;
+                    const isCurrentUser = Boolean(currentUserId) && player.userId === currentUserId;
 
                     return (
                         <motion.div
                             key={player.userId}
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: index * 0.05 }}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: index * 0.03 }}
                             className={cn(
-                                "relative flex items-center justify-between p-3 rounded-xl border backdrop-blur-sm overflow-hidden",
-                                isTop
-                                    ? "bg-gradient-to-r from-brand-gold/10 to-brand-gold/5 border-brand-gold/30 shadow-[0_0_15px_rgba(255,215,0,0.1)]"
-                                    : "bg-white/5 border-white/5"
+                                "relative flex flex-col items-center justify-center p-2 rounded-xl border backdrop-blur-sm overflow-hidden text-center gap-1",
+                                "bg-white/5 border-white/5",
+                                isCurrentUser && "ring-1 ring-white/80 border-white/80 shadow-[0_0_14px_rgba(255,255,255,0.45)] z-10"
                             )}
                         >
-                            {/* Color Bar */}
+                            {/* Color Bar / Indicator */}
                             <div
-                                className="absolute left-0 top-0 bottom-0 w-1"
+                                className="absolute top-0 inset-x-0 h-[2.8px] opacity-50"
                                 style={{ backgroundColor: player.color }}
                             />
 
-                            <div className="flex items-center gap-3 pl-2">
-                                {/* Avatar */}
-                                <div className="w-8 h-8 rounded-full bg-black/40 border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
-                                    <div
-                                        className="w-full h-full opacity-80"
-                                        style={{ backgroundColor: player.color }}
-                                    />
-                                    <div className="absolute text-[10px] font-bold text-white/50">
+                            {/* Avatar */}
+                            <div className="w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center overflow-hidden shrink-0 shadow-lg mb-0.5">
+                                {player.avatarUrl ? (
+                                    <img src={player.avatarUrl} alt={player.name} className="w-full h-full object-cover" />
+                                ) : (
+                                    <span className="font-bold text-white/50 text-xs">
                                         {player.name.slice(0, 1)}
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col overflow-hidden">
-                                    <span className={cn(
-                                        "text-xs font-bold truncate max-w-[80px]",
-                                        isTop ? "text-brand-gold" : "text-white"
-                                    )}>
-                                        {player.name}
                                     </span>
-                                </div>
+                                )}
+                            </div>
+                            {/* Chance */}
+                            <div className="text-sm font-black font-mono leading-none text-white">
+                                {chance.toFixed(1)}%
                             </div>
 
-                            {/* Win Chance Circle */}
-                            <div className="flex flex-col items-end">
-                                <div className={cn(
-                                    "text-sm font-black font-mono",
-                                    isTop ? "text-brand-gold" : "text-white/80"
-                                )}>
-                                    {chance.toFixed(1)}%
-                                </div>
+                            {/* Amount */}
+                            <div className="text-[10px] font-bold text-white/60 bg-white/5 px-1.5 py-0.5 rounded-md">
+                                {formatNanotonsCompact(player.amountNanotons)}
                             </div>
                         </motion.div>
                     );

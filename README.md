@@ -1,132 +1,142 @@
-# Jackpot PvP (TON) - Secure Backend Skeleton
+# TONanza
 
-Backend for Telegram Mini App roulette-style jackpot game on TON.
+TONanza is a Telegram Mini App for secure deal management. The backend validates Telegram WebApp init data, stores deals and chat history in PostgreSQL, streams deal updates through Socket.IO, and lets admins coordinate requisites, notifications, photos, and deal closure from a compact mobile UI.
 
 ## Stack
 
-- Node.js + TypeScript + Fastify
-- PostgreSQL + Prisma
-- Real-time events via Socket.io
-- TON integration via `tonweb`
-- Frontend: React + Vite + Tailwind + Framer Motion + Telegram WebApp SDK (`frontend/`)
+- Node.js 20, TypeScript, Fastify
+- Prisma ORM and PostgreSQL
+- Telegraf for Telegram bot entry points
+- Socket.IO for real-time deal updates
+- React 19, Vite, Tailwind/PostCSS
+- Docker Compose for local infrastructure and production backend runtime
 
-## Security guarantees implemented
+## Features
 
-1. Race-condition protection:
-- `placeBet` and deposit crediting run inside SERIALIZABLE DB transactions.
-- Critical rows are locked with `SELECT ... FOR UPDATE` (`users`, `games`).
+- Telegram WebApp authentication with HMAC signature validation
+- Admin allow-list through `ADMIN_TELEGRAM_IDS`
+- Deal creation with short shareable codes
+- Participant auto-join by deal code
+- Persistent deal chat with text and image messages
+- Admin-only requisites, notifications, and close actions
+- Real-time updates per deal room
+- Local dev auth bypass outside production
 
-2. Money precision:
-- All money values are `BigInt` in nanotons (`1 TON = 1_000_000_000 nanotons`).
-- No floating-point math in payout and commission logic.
+## Repository Layout
 
-3. Provably fair:
-- Round starts with hidden `serverSeed` and published `serverSeedHash`.
-- Winner ticket is computed after timer end from `sha256(serverSeed:clientSeed)`.
-- `clientSeed` comes from TON masterchain data (with fallback), and round proof is returned.
+```text
+.
+├── src/                  # Fastify API, Telegram bot, domain services
+├── prisma/               # Prisma schema and migrations
+├── frontend/             # Telegram Mini App client
+├── Dockerfile            # Production backend image
+├── docker-compose.yml    # PostgreSQL + backend runtime
+└── deploy.sh             # Optional SSH deploy helper
+```
 
-4. Strict validation:
-- API payloads are validated with Zod.
-- Non-positive/invalid bet inputs are rejected.
+## Local Development
 
-5. Deposit idempotency:
-- `deposits.tx_hash` is unique and used as idempotency key.
-- Duplicate blockchain transaction cannot be credited twice.
+Requirements:
 
-## Data model (Prisma)
+- Node.js 20+
+- npm 10+
+- Docker Desktop or a local PostgreSQL instance
 
-Tables in `prisma/schema.prisma`:
-- `users`
-- `deposits`
-- `withdrawals`
-- `games`
-- `bets`
+Start PostgreSQL:
 
-All balance/amount/pot/commission fields are `BigInt` nanotons.
+```bash
+docker compose up -d postgres
+```
 
-## API (minimal)
+Install dependencies:
 
-- `GET /health`
-- `GET /v1/games/active`
-- `POST /v1/bets` body: `{ "userId": "...", "amountNanotons": "..." }`
-- `POST /v1/users/sync` body: `{ "telegramId": "..." }`
-- `POST /v1/games/:gameId/resolve` body: `{ "clientSeed": "optional" }`
-- `GET /v1/games/:gameId/fairness`
-- `POST /v1/watcher/poll`
+```bash
+npm ci
+npm --prefix frontend ci
+```
 
-## Socket events
-
-- `game:betPlaced`
-- `game:resolved`
-
-## Quick start
-
-1. Copy env:
+Create local env files:
 
 ```bash
 cp .env.example .env
+cp frontend/.env.example frontend/.env
 ```
 
-2. Start PostgreSQL (Docker):
-
-```bash
-docker compose up -d
-```
-
-3. Install dependencies:
-
-```bash
-npm install
-```
-
-4. Generate Prisma client and run migrations:
+Run migrations and generate Prisma client:
 
 ```bash
 npm run prisma:generate
 npm run prisma:migrate
 ```
 
-5. Run in dev:
+Run backend and frontend in separate terminals:
 
 ```bash
 npm run dev
-```
-
-6. Run frontend in another terminal:
-
-```bash
-npm run frontend:install
 npm run frontend:dev
 ```
 
-## Notes for Telegram Mini App frontend
+For browser-based local preview, the frontend sends `x-bypass-auth` only outside production. Real Telegram sessions use `X-Telegram-Init-Data` and require `TELEGRAM_BOT_TOKEN`.
 
-Frontend (React + Telegram WebApp SDK) can subscribe to Socket.io events and use the API above for:
-- showing active round + timer
-- creating bets
-- showing winner + fairness proof post-round
+## Environment
 
-Frontend entrypoint and key files:
-- `frontend/tailwind.config.ts`
-- `frontend/src/components/GameWheel.tsx`
-- `frontend/src/components/BettingControls.tsx`
-- `frontend/src/App.tsx`
+Backend variables:
 
-## Troubleshooting
+| Variable | Purpose |
+| --- | --- |
+| `NODE_ENV` | `development`, `test`, or `production` |
+| `PORT` | API port, defaults to `3000` |
+| `POSTGRES_USER` | PostgreSQL user for Docker Compose |
+| `POSTGRES_PASSWORD` | PostgreSQL password for Docker Compose |
+| `POSTGRES_DB` | PostgreSQL database for Docker Compose |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `FRONTEND_URL` | Public Mini App URL used by the bot |
+| `TELEGRAM_BOT_TOKEN` | Bot token used for auth validation and notifications |
+| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs with admin access |
+| `CORS_ORIGINS` | Extra allowed frontend origins |
+| `UPLOAD_DIR` | Local image upload directory |
+| `MAX_UPLOAD_MB` | Upload limit per file, max `25` |
 
-- `P1001: Can't reach database server at localhost:5432`:
-  - ensure PostgreSQL is running locally;
-  - with Docker, first start Docker Desktop, then run:
+Frontend variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `VITE_API_BASE_URL` | Backend API origin |
+| `VITE_SOCKET_URL` | Socket.IO origin; falls back to API origin when omitted |
+
+## Quality Gates
 
 ```bash
-docker compose up -d
-npm run prisma:migrate
+npm run check
 ```
 
-- `Wallet watcher poll failed ... Unexpected end of JSON input`:
-  - set `TONCENTER_BASE_URL` to `https://toncenter.com/api/v2/jsonRPC`;
-  - set a real `APP_WALLET_ADDRESS` (not `EQ...` placeholder).
+The check command runs backend type checking and a production frontend build.
 
-- Bets fail with `User not found` / `Insufficient balance` in local dev:
-  - frontend now calls `POST /v1/users/sync` to auto-create/sync user by Telegram ID;
-  - for local testing, bootstrap balance is controlled by `DEV_BOOTSTRAP_BALANCE_NANOTONS`.
+## Docker
+
+Run the backend and database:
+
+```bash
+docker compose --env-file .env up -d --build
+```
+
+Apply migrations inside the backend container:
+
+```bash
+docker compose --env-file .env exec backend npx prisma migrate deploy
+```
+
+The frontend is intentionally built as a static artifact and can be served by Nginx, CDN, or any static host.
+
+## Deployment Helper
+
+`deploy.sh` is an optional SSH helper. It expects explicit runtime configuration instead of hardcoded machine-specific values:
+
+```bash
+SERVER_IP=203.0.113.10 \
+SSH_KEY="$HOME/.ssh/tonanza" \
+PUBLIC_ORIGIN="https://tonanza.example" \
+./deploy.sh
+```
+
+Production should keep secrets in `.env` or the deployment platform secret store. `.env` files are ignored by git.

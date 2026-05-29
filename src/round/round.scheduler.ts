@@ -10,7 +10,7 @@ export class RoundScheduler {
     private readonly gameService: GameService,
     private readonly entropyService: TonEntropyService,
     private readonly pollIntervalMs = 1_000
-  ) {}
+  ) { }
 
   start() {
     if (this.intervalId) {
@@ -54,6 +54,9 @@ export class RoundScheduler {
         const clientSeed = await this.entropyService.getClientSeed();
         await this.gameService.determineWinner(round.id, clientSeed);
       }
+
+      await this.gameService.settleMaturedPrizes();
+      await this.gameService.broadcastGameState();
     } catch (error) {
       console.error("RoundScheduler tick failed", error);
     }

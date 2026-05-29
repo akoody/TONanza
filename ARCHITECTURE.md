@@ -1,67 +1,43 @@
-# Jackpot PvP Architecture (TON)
+# Architecture
 
-## Components
+## Runtime Boundary
 
-1. API + Realtime (`src/server.ts`)
-- Fastify REST API for bets/rounds/fairness.
-- Socket.io for live UI updates (`game:betPlaced`, `game:resolved`).
+TONanza is split into two deployable parts:
 
-2. Core game logic (`src/game/game.service.ts`)
-- `placeBet(userId, amountNanotons)`.
-- `determineWinner(gameId, clientSeed)`.
-- Round lifecycle and provably-fair proof generation.
+- `src/server.ts` starts the Fastify API, registers CORS, uploads, static file serving, Socket.IO, and Telegram bot lifecycle hooks.
+- `frontend/src/main.tsx` starts the Telegram Mini App client. The frontend talks to the backend over REST and subscribes to deal-scoped Socket.IO rooms.
 
-3. Provably fair module (`src/game/provably-fair.ts`)
-- Generates `serverSeed` and `serverSeedHash`.
-- Computes deterministic winning ticket from combined seed entropy.
+The backend is the source of truth for authentication, permissions, deal state, message history, and uploaded image paths. The frontend is a thin mobile client with optimistic-free state updates.
 
-4. Deposit watcher (`src/wallet/wallet-watcher.service.ts`)
-- Polls TON transactions for app wallet.
-- Parses memo/comment (`uid:<id>`).
-- Idempotent crediting using unique `tx_hash`.
+## Backend Flow
 
-5. Entropy provider (`src/wallet/ton-entropy.service.ts`)
-- Pulls latest TON masterchain metadata for `clientSeed`.
+1. Every API request resolves the viewer through `resolveTelegramAuth`.
+2. `DealService.upsertUser` syncs Telegram profile fields and admin status.
+3. Deal operations validate input with Zod schemas before touching persistence.
+4. Prisma writes the canonical state to PostgreSQL.
+5. Mutating deal operations emit a `deal:update` event to `deal:{code}` Socket.IO room.
 
-6. Scheduler (`src/round/round.scheduler.ts`)
-- Resolves expired rounds automatically.
+This keeps realtime delivery disposable: if a socket event is missed, the client can reload the deal by code and get the full canonical state.
 
-7. Storage (`prisma/schema.prisma`)
-- PostgreSQL-only, no floating money types.
+## Data Model
 
-## Money model
+The active Prisma model is intentionally small:
 
-- Internal unit: nanotons (`bigint`) everywhere.
-- 1 ticket = 1 nanotons of bet size.
-- Commission: integer basis points (`5% = 500 / 10_000`).
+- `User` mirrors Telegram identity and admin status.
+- `Deal` stores title, terms, amount, owner role, status, and close timestamp.
+- `DealParticipant` links users to deals with owner/member/admin roles.
+- `ChatMessage` stores text, photos, system events, requisites, and admin notifications.
 
-## Security-critical invariants
+BigInt IDs are serialized to strings before crossing the API boundary.
 
-1. No double-spend via parallel requests
-- User row lock (`SELECT ... FOR UPDATE`) before balance mutation.
-- Game row lock before ticket range assignment.
+## Security Notes
 
-2. Idempotent deposits
-- Unique `deposits.tx_hash` blocks duplicate credits.
+- Telegram WebApp signatures are validated server-side with the bot token.
+- Development auth bypass is disabled in production.
+- CORS is origin-checked against configured frontend origins.
+- Admin capabilities are based on `ADMIN_TELEGRAM_IDS`, not frontend state.
+- Uploaded files are limited by MIME prefix, extension allow-list, count, and size.
 
-3. Server-seed secrecy
-- `serverSeedHash` is public pre-round.
-- `serverSeed` is revealed only when round is resolved.
+## Build Surface
 
-4. Input hardening
-- Zod validates request payloads (positive integer strings).
-
-## Round flow
-
-1. Open round exists (`ensureOpenGameExists`).
-2. User places bet:
-- lock `games` + `users` rows,
-- decrement balance,
-- allocate ticket range,
-- update pot and next ticket cursor.
-3. Timer expires.
-4. Scheduler fetches `clientSeed` from TON entropy.
-5. Winner chosen deterministically.
-6. Winner balance incremented atomically.
-7. Round closed and proof available.
-8. New open round is created.
+The repository still contains historical modules from earlier product experiments. The production TypeScript build is scoped to `src/server.ts`, which pulls in the currently wired runtime dependencies. This keeps the release path strict without pretending unrelated experimental code is part of the active backend.

@@ -1,54 +1,37 @@
 import WebApp from "@twa-dev/sdk";
 
-let initialized = false;
-
 export const initTelegram = () => {
-  if (initialized) {
-    return;
-  }
-
   try {
     WebApp.ready();
     WebApp.expand();
-    initialized = true;
+    WebApp.setHeaderColor("#0b182b");
+    WebApp.setBackgroundColor("#0b182b");
   } catch {
-    initialized = false;
+    // Browser preview outside Telegram.
   }
 };
 
-const safeHaptic = (callback: () => void) => {
-  try {
-    callback();
-  } catch {
-    // Ignore haptic calls outside Telegram runtime.
+export const authHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (WebApp.initData) {
+    headers["X-Telegram-Init-Data"] = WebApp.initData;
+  } else if (import.meta.env.DEV) {
+    headers["x-bypass-auth"] = "true";
+    headers["x-dev-user-id"] = window.localStorage.getItem("sdelki_dev_user_id") || "100000001";
   }
+  return headers;
 };
 
-export const hapticImpactLight = () => {
-  safeHaptic(() => WebApp.HapticFeedback.impactOccurred("light"));
+export const multipartAuthHeaders = (): Record<string, string> => {
+  const headers = authHeaders();
+  delete headers["Content-Type"];
+  return headers;
 };
 
-export const hapticImpactMedium = () => {
-  safeHaptic(() => WebApp.HapticFeedback.impactOccurred("medium"));
-};
-
-export const hapticSelectionChanged = () => {
-  safeHaptic(() => WebApp.HapticFeedback.selectionChanged());
-};
-
-export const hapticNotificationSuccess = () => {
-  safeHaptic(() => WebApp.HapticFeedback.notificationOccurred("success"));
-};
-
-export const getTelegramUserId = (): string | null => {
+export const haptic = () => {
   try {
-    const id = WebApp.initDataUnsafe?.user?.id;
-    if (typeof id === "number") {
-      return String(id);
-    }
-
-    return null;
+    WebApp.HapticFeedback.selectionChanged();
   } catch {
-    return null;
+    // No-op outside Telegram.
   }
 };

@@ -38,7 +38,7 @@ export function Confetti({ active, duration = 3000 }: ConfettiProps) {
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
 
-        canvas.width = window.innerWidth;
+        canvas.width = Math.min(window.innerWidth, 448);
         canvas.height = window.innerHeight;
 
         // Spawn particles
@@ -111,8 +111,7 @@ export function Confetti({ active, duration = 3000 }: ConfettiProps) {
     return (
         <canvas
             ref={canvasRef}
-            className="fixed inset-0 z-[110] pointer-events-none"
-            style={{ width: "100vw", height: "100vh" }}
+            className="fixed inset-y-0 inset-x-0 mx-auto w-full h-full max-w-md z-[230] pointer-events-none"
         />
     );
 }

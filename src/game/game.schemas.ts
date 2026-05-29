@@ -10,6 +10,10 @@ export const placeBetSchema = z.object({
   amountNanotons: positiveBigIntString
 });
 
+export const cancelBetSchema = z.object({
+  userId: positiveBigIntString
+});
+
 export const determineWinnerSchema = z.object({
   clientSeed: z.string().min(16).max(255).optional()
 });
@@ -19,5 +23,6 @@ export const gameIdParamSchema = z.object({
 });
 
 export type PlaceBetInput = z.infer<typeof placeBetSchema>;
+export type CancelBetInput = z.infer<typeof cancelBetSchema>;
 export type DetermineWinnerInput = z.infer<typeof determineWinnerSchema>;
 export type GameIdParams = z.infer<typeof gameIdParamSchema>;

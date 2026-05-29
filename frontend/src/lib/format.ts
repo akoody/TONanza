@@ -1,4 +1,9 @@
 const NANOTONS_PER_TON = 1_000_000_000n;
+const DEFAULT_MAX_FRACTION_DIGITS = 9;
+const DISPLAY_FRACTION_DIGITS = 2;
+const NANOTONS_PER_HUNDREDTH_TON = 10_000_000n;
+const NANOTONS_PER_HUNDREDTH_KTON = 10_000_000_000n;
+const NANOTONS_PER_KTON = 1_000_000_000_000n;
 
 export const parseTonInputToNanotons = (value: string): bigint | null => {
   const normalized = value.trim().replace(",", ".");
@@ -14,25 +19,58 @@ export const parseTonInputToNanotons = (value: string): bigint | null => {
   return nanotons > 0n ? nanotons : null;
 };
 
-export const formatNanotonsToTon = (value: bigint): string => {
-  const whole = value / NANOTONS_PER_TON;
-  const fraction = value % NANOTONS_PER_TON;
+const formatFixedFraction = (whole: bigint, fraction: bigint, digits: number): string => {
+  if (digits <= 0) return whole.toString();
+  const fractionText = fraction.toString().padStart(digits, "0").replace(/0+$/, "");
+  return fractionText.length > 0 ? `${whole.toString()}.${fractionText}` : whole.toString();
+};
 
-  if (fraction === 0n) {
-    return `${whole.toString()} TON`;
+export const formatNanotonsToTon = (value: bigint): string => {
+  return `${formatTonValue(value, DISPLAY_FRACTION_DIGITS)} TON`;
+};
+
+export const formatTonValue = (value: bigint, maxFractionDigits: number = DEFAULT_MAX_FRACTION_DIGITS): string => {
+  const safeDigits = Number.isInteger(maxFractionDigits)
+    ? Math.min(DEFAULT_MAX_FRACTION_DIGITS, Math.max(0, maxFractionDigits))
+    : DEFAULT_MAX_FRACTION_DIGITS;
+
+  const whole = value / NANOTONS_PER_TON;
+  if (safeDigits === 0) {
+    return whole.toString();
   }
 
-  const fractionText = fraction.toString().padStart(9, "0").replace(/0+$/, "");
-  return `${whole.toString()}.${fractionText} TON`;
+  const fraction = (value % NANOTONS_PER_TON).toString().padStart(9, "0").slice(0, safeDigits);
+  const trimmed = fraction.replace(/0+$/, "");
+  if (!trimmed) {
+    return whole.toString();
+  }
+
+  return `${whole.toString()}.${trimmed}`;
+};
+
+export const formatNanotonsForInput = (
+  value: bigint,
+  maxFractionDigits: number = DEFAULT_MAX_FRACTION_DIGITS
+): string => {
+  return formatTonValue(value, maxFractionDigits);
+};
+
+export const formatNanotonsBalance = (value: bigint): string => {
+  return `${formatTonValue(value, DISPLAY_FRACTION_DIGITS)} TON`;
 };
 
 export const formatNanotonsCompact = (value: bigint): string => {
-  const ton = Number(value / 1_000_000n) / 1_000;
-  if (ton >= 1000) {
-    return `${(ton / 1000).toFixed(2)}K TON`;
+  if (value >= NANOTONS_PER_KTON) {
+    const hundredthKton = value / NANOTONS_PER_HUNDREDTH_KTON;
+    const wholeKton = hundredthKton / 100n;
+    const fractionKton = hundredthKton % 100n;
+    return `${formatFixedFraction(wholeKton, fractionKton, DISPLAY_FRACTION_DIGITS)}K TON`;
   }
 
-  return `${ton.toFixed(2)} TON`;
+  const hundredthTon = value / NANOTONS_PER_HUNDREDTH_TON;
+  const wholeTon = hundredthTon / 100n;
+  const fractionTon = hundredthTon % 100n;
+  return `${formatFixedFraction(wholeTon, fractionTon, DISPLAY_FRACTION_DIGITS)} TON`;
 };
 
 export const randomColorByUserId = (userId: string): string => {

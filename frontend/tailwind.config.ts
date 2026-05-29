@@ -5,15 +5,13 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#050510", // Deep Void
-        surface: "rgba(26, 26, 46, 0.6)", // Glass panels
-        "neon-blue": "#06b6d4", // cyan-500
-        "brand-purple": "#F700FF",
-        "brand-pink": "#A600FF",
-        "electric-pink": "#FF0055", // Bright Electric Pink
-        "cyan-deep": "#083344", // deep cyan
-        "brand-gold": "#FFD700",
-        "brand-amber": "#FFAA00",
+        background: "#042f2e", // Deep Teal (Base)
+        surface: "rgba(8, 51, 68, 0.6)", // Cyan-950 transparent
+        "deep-ocean": "#083344", // Cyan-950
+        "electric-pink": "#ec4899", // Pink-500
+        "electric-rose": "#e11d48", // Rose-600
+        "amber-glow": "#fbbf24", // Amber-400
+        "cyan-text": "#a5f3fc", // Cyan-200
       },
       fontFamily: {
         sans: ["Inter", "Kanit", "ui-sans-serif", "system-ui", "sans-serif"],
