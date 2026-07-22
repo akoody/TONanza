@@ -4,6 +4,8 @@ TONanza is a Telegram Mini App for a TON-based jackpot casino experience. Player
 
 The project is built as a full-stack TypeScript product: a mobile-first Telegram WebApp client, a Node.js backend, PostgreSQL persistence, Socket.IO realtime updates, TON wallet/deposit infrastructure, game history, referrals, and in-game chat.
 
+![TONanza portfolio preview](frontend/public/portfolio/tonanza-phone-cover.png)
+
 ## Stack
 
 - Node.js 20, TypeScript, Fastify
