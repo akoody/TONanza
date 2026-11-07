@@ -1,5 +1,7 @@
 # TONanza
 
+[![CI](https://github.com/akoody/TONanza/actions/workflows/ci.yml/badge.svg)](https://github.com/akoody/TONanza/actions/workflows/ci.yml)
+
 TONanza is a Telegram Mini App for a TON-based jackpot casino experience. Players enter fast PvP jackpot rounds, place TON-denominated bets, watch the live pot grow, and see the winner selected through a provably-fair round flow.
 
 The project is built as a full-stack TypeScript product: a mobile-first Telegram WebApp client, a Node.js backend, PostgreSQL persistence, Socket.IO realtime updates, TON wallet/deposit infrastructure, game history, referrals, and in-game chat.
@@ -25,7 +27,6 @@ The project is built as a full-stack TypeScript product: a mobile-first Telegram
 - TON payment/deposit UX for Telegram Mini App users
 - Referral and onboarding flows
 - Admin/moderation foundations for chat and operational control
-- Production-oriented repository setup: Docker, env examples, docs, and build checks
 
 ## Repository Layout
 
@@ -43,3 +44,42 @@ The project is built as a full-stack TypeScript product: a mobile-first Telegram
 ├── docker-compose.yml    # PostgreSQL + backend runtime
 └── deploy.sh             # Optional SSH deploy helper
 ```
+
+## Fairness
+
+Each round commits to a server seed by publishing `sha256(serverSeed)` before bets close. The client seed is taken from the latest TON masterchain block (`seqno:root_hash:file_hash`), which the server cannot choose. After the round:
+
+```
+winningTicket = (sha256(serverSeed:clientSeed) % totalTickets) + 1
+```
+
+`GET /v1/games/:gameId/fairness` reveals the server seed and returns everything needed to recompute the winner. If the TON API is unavailable when a round resolves, the server generates the client seed itself; such seeds start with `fallback:` and the endpoint reports `clientSeedSource: "server-fallback"`, so those rounds are not independently verifiable.
+
+## Security
+
+- Every request is authenticated with Telegram `initData`: HMAC checked in constant time, `auth_date` limited by `TELEGRAM_AUTH_MAX_AGE_SECONDS`.
+- Balances are integer nanotons; bets and withdrawals use guarded atomic decrements, withdrawals are claimed with a `PENDING → PROCESSING` transition before any transfer.
+- Development helpers (auth bypass headers, test balance top-up, bootstrap balance, manual watcher poll) require both `NODE_ENV=development` and `DEV_TOOLS_ENABLED=true`. In production the server refuses to start with them enabled or without `TELEGRAM_BOT_TOKEN`, and `deploy.sh` refuses a non-production `.env`.
+- HTTP, socket connection and socket event rate limits; security headers and a strict CSP on API responses.
+
+## Development
+
+```bash
+cp .env.example .env          # set DATABASE_URL, APP_WALLET_ADDRESS; DEV_TOOLS_ENABLED=true for local auth bypass
+npm ci && npm --prefix frontend ci --legacy-peer-deps
+npx prisma migrate dev
+npm run dev                   # API
+npm run frontend:dev          # Mini App
+```
+
+`npm run check` runs the TypeScript check, tests and the frontend build; CI runs it on every pull request. Tests cover the provably fair derivation, Telegram `initData` validation, configuration guards and round seed sources.
+
+## Known limitations
+
+- Rate limit state lives in process memory, so limits are per instance.
+- `frontend/src/App.tsx` and `src/server.ts` are large single files that should be split by feature.
+- Tests do not yet cover the game and wallet services against a database.
+
+## License
+
+[MIT](LICENSE)
