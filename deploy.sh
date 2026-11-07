@@ -12,6 +12,18 @@ LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 trap 'echo "Deploy failed. Check the error above and fix it before retrying."' ERR
 
+env_value() {
+  grep -E "^$1=" "$LOCAL_DIR/.env" | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+}
+if [ "$(env_value NODE_ENV)" != "production" ]; then
+  echo "Refusing to deploy: .env must set NODE_ENV=production" >&2
+  exit 1
+fi
+if [ "$(env_value DEV_TOOLS_ENABLED)" = "true" ]; then
+  echo "Refusing to deploy: DEV_TOOLS_ENABLED must not be true in production" >&2
+  exit 1
+fi
+
 echo "Deploying TONanza to $SERVER_IP..."
 
 # 1. Sync files

@@ -46,6 +46,11 @@ const envSchema = z.object({
   WATCHER_RECOVER_FAILED_LIMIT: z.coerce.number().int().positive().max(1000).default(100),
   MIN_BET_NANOTONS: z.coerce.bigint().positive().default(100_000_000n),
   DEV_BOOTSTRAP_BALANCE_NANOTONS: z.coerce.bigint().nonnegative().default(100_000_000_000n),
+  /**
+   * Включает обход авторизации, тестовое начисление баланса и прочие
+   * dev-маршруты. Работает только вместе с NODE_ENV=development.
+   */
+  DEV_TOOLS_ENABLED: booleanFromEnv.default(false),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_AUTH_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().default(86_400),
   FRONTEND_URL: z.string().url().default("https://tonanza.online"),
@@ -77,4 +82,36 @@ const envSchema = z.object({
   CHAT_ADMIN_USER_IDS: csvBigIntIdsFromEnv.default([])
 });
 
-export const env = envSchema.parse(process.env);
+const checkedEnvSchema = envSchema.superRefine((value, ctx) => {
+  if (value.NODE_ENV === "production" && value.DEV_TOOLS_ENABLED) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["DEV_TOOLS_ENABLED"],
+      message: "dev tools cannot be enabled in production"
+    });
+  }
+  if (value.NODE_ENV === "production" && !value.TELEGRAM_BOT_TOKEN) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["TELEGRAM_BOT_TOKEN"],
+      message: "TELEGRAM_BOT_TOKEN is required in production"
+    });
+  }
+});
+
+export type Env = z.infer<typeof envSchema>;
+
+export function parseEnv(raw: NodeJS.ProcessEnv): Env {
+  return checkedEnvSchema.parse(raw);
+}
+
+/**
+ * Dev-инструменты включаются только явно: NODE_ENV=development и
+ * DEV_TOOLS_ENABLED=true. Пропущенный или опечатанный NODE_ENV их не включает.
+ */
+export function devToolsEnabled(value: Pick<Env, "NODE_ENV" | "DEV_TOOLS_ENABLED">): boolean {
+  return value.NODE_ENV === "development" && value.DEV_TOOLS_ENABLED;
+}
+
+export const env = parseEnv(process.env);
+export const isDevToolsEnabled = devToolsEnabled(env);

@@ -1,13 +1,13 @@
 import Fastify from "fastify";
 import { prisma } from "./lib/prisma.js";
-import { env } from "./config/env.js";
+import { isDevToolsEnabled } from "./config/env.js";
 import { Server as SocketIOServer } from "socket.io";
 
 // This file is used to manually trigger balance updates for testing purposes
 // It mimics the behavior of the real backend services
 
 export async function registerDevRoutes(app: Fastify.FastifyInstance, io: SocketIOServer) {
-    if (env.NODE_ENV === "production") return;
+    if (!isDevToolsEnabled) return;
 
     app.post<{ Body: { userId: string; amountNanotons: string } }>("/v1/dev/min-balance", async (request, reply) => {
         const { userId, amountNanotons } = request.body;
