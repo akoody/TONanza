@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # Prisma generate и импорт конфига требуют эти переменные; базы в этих проверках нет.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      APP_WALLET_ADDRESS: EQ_ci_placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - run: npm ci
+      - run: npm ci --legacy-peer-deps
+        working-directory: frontend
+      - run: npx prisma generate
+      - run: npm run check
+      - run: npm run build

@@ -12,7 +12,8 @@
     "prisma:migrate": "prisma migrate dev",
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
-    "check": "npm run typecheck && npm run frontend:build"
+    "check": "npm run typecheck && npm test && npm run frontend:build",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",
@@ -32,5 +33,6 @@
     "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
-  }
+  },
+  "license": "MIT"
 }
