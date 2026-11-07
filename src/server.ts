@@ -3,7 +3,7 @@ import Fastify, { type FastifyRequest } from "fastify";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import { z, ZodError } from "zod";
 import { ChatService, type ChatUserContext } from "./chat/chat.service.js";
-import { env } from "./config/env.js";
+import { env, isDevToolsEnabled } from "./config/env.js";
 import { registerDevRoutes } from "./dev-helper.js";
 import { cancelBetSchema, gameIdParamSchema, placeBetSchema } from "./game/game.schemas.js";
 import { userSyncSchema } from "./game/user.schemas.js";
@@ -39,7 +39,7 @@ const frontendOrigin = normalizeOrigin(env.FRONTEND_URL);
 if (frontendOrigin) {
   allowedOrigins.add(frontendOrigin);
 }
-if (env.NODE_ENV !== "production") {
+if (isDevToolsEnabled) {
   allowedOrigins.add("http://localhost:5173");
   allowedOrigins.add("http://127.0.0.1:5173");
   allowedOrigins.add("http://localhost:3000");
@@ -309,7 +309,7 @@ const parsePositiveBigInt = (value: unknown): bigint | null => {
 };
 
 const extractTelegramIdentity = (request: FastifyRequest): AuthIdentity => {
-  const isDevBypass = env.NODE_ENV !== "production" && request.headers["x-bypass-auth"] === "true";
+  const isDevBypass = isDevToolsEnabled && request.headers["x-bypass-auth"] === "true";
 
   if (isDevBypass) {
     const rawDevId = request.headers["x-dev-user-id"];
@@ -375,7 +375,7 @@ type SocketRuntimeData = {
 const extractSocketTelegramId = (payload: SocketAuthPayload | undefined): bigint | null => {
   if (!payload) return null;
 
-  const isDevBypass = env.NODE_ENV !== "production" && payload.devBypass === true;
+  const isDevBypass = isDevToolsEnabled && payload.devBypass === true;
   if (isDevBypass) {
     return parsePositiveBigInt(payload.devUserId) ?? null;
   }
@@ -770,7 +770,7 @@ app.post("/v1/users/sync", async (request, reply) => {
 
     if (existing) {
       const shouldBootstrapInDev =
-        env.NODE_ENV !== "production" &&
+        isDevToolsEnabled &&
         defaultBootstrapBalance > 0n &&
         existing.balanceNanotons === 0n;
 
@@ -964,8 +964,8 @@ app.get("/v1/games/:gameId/fairness", async (request, reply) => {
 });
 
 app.post("/v1/watcher/poll", async (_request, reply) => {
-  if (env.NODE_ENV === "production") {
-    throw new AppError(403, "Watcher poll endpoint is disabled in production");
+  if (!isDevToolsEnabled) {
+    throw new AppError(403, "Watcher poll endpoint is available only with dev tools enabled");
   }
 
   await walletWatcher.pollOnce();

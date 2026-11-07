@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "crypto";
 
+export const FALLBACK_SEED_PREFIX = "fallback:";
+
+/** Откуда взят клиентский сид раунда. */
+export function clientSeedSource(clientSeed: string | null): "ton-masterchain" | "server-fallback" | null {
+  if (!clientSeed) return null;
+  return clientSeed.startsWith(FALLBACK_SEED_PREFIX) ? "server-fallback" : "ton-masterchain";
+}
+
 export class TonEntropyService {
   constructor(
     private readonly baseUrl: string,
@@ -16,9 +24,10 @@ export class TonEntropyService {
       // Public chain data acts as external entropy for provably fair seed mix.
       return `${last.seqno}:${last.root_hash}:${last.file_hash}`;
     } catch {
-      // Fallback keeps service operational, but production should monitor TON API availability.
+      // Раунд не должен зависать из-за TON API, но такой сид выбирает сервер,
+      // поэтому он помечается и раунд не считается независимо проверяемым.
       const fallback = `${Date.now()}:${randomUUID()}`;
-      return createHash("sha256").update(fallback).digest("hex");
+      return `${FALLBACK_SEED_PREFIX}${createHash("sha256").update(fallback).digest("hex")}`;
     }
   }
 

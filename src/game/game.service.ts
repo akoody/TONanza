@@ -8,6 +8,7 @@ import {
   generateServerSeed,
   hashSeed
 } from "./provably-fair.js";
+import { clientSeedSource } from "../wallet/ton-entropy.service.js";
 
 const BPS_DIVISOR = 10_000n;
 const GAME_LOCK_KEY = 7_407_026;
@@ -957,6 +958,8 @@ export class GameService {
       serverSeed: isResolved ? game.serverSeed : null,
       totalTickets,
       winningTicket,
+      // server-fallback: TON API был недоступен, оба сида выбрал сервер.
+      clientSeedSource: clientSeedSource(game.clientSeed),
       verificationFormula: "winningTicket = (sha256(serverSeed:clientSeed) % totalTickets) + 1"
     };
   }
