@@ -59,6 +59,7 @@ winningTicket = (sha256(serverSeed:clientSeed) % totalTickets) + 1
 
 - Every request is authenticated with Telegram `initData`: HMAC checked in constant time, `auth_date` limited by `TELEGRAM_AUTH_MAX_AGE_SECONDS`.
 - Balances are integer nanotons; bets and withdrawals use guarded atomic decrements, withdrawals are claimed with a `PENDING → PROCESSING` transition before any transfer.
+- Withdrawals run one at a time because the wallet only accepts the next `seqno`. A failed API response proves nothing, so the outcome is read from the wallet: `seqno` advanced means sent, unchanged after the message expires means safe to refund, and anything else is left for manual review.
 - Development helpers (auth bypass headers, test balance top-up, bootstrap balance, manual watcher poll) require both `NODE_ENV=development` and `DEV_TOOLS_ENABLED=true`. In production the server refuses to start with them enabled or without `TELEGRAM_BOT_TOKEN`, and `deploy.sh` refuses a non-production `.env`.
 - HTTP, socket connection and socket event rate limits; security headers and a strict CSP on API responses.
 
@@ -72,13 +73,13 @@ npm run dev                   # API
 npm run frontend:dev          # Mini App
 ```
 
-`npm run check` runs the TypeScript check, tests and the frontend build; CI runs it on every pull request. Tests cover the provably fair derivation, Telegram `initData` validation, configuration guards and round seed sources.
+`npm run check` runs the TypeScript check, tests and the frontend build; CI runs it on every pull request. Tests cover the provably fair derivation, Telegram `initData` validation, configuration guards and round seed sources. `npm run test:db` runs the game and money flows against PostgreSQL (a database from `DATABASE_URL` with migrations applied): simultaneous bets, double spends, cancellation, resolution and proofs, one-time prize and referral payouts, and every withdrawal outcome.
 
 ## Known limitations
 
 - Rate limit state lives in process memory, so limits are per instance.
 - `frontend/src/App.tsx` and `src/server.ts` are large single files that should be split by feature.
-- Tests do not yet cover the game and wallet services against a database.
+- A withdrawal whose outcome could not be determined stays in `PROCESSING` with a note and needs manual review.
 
 ## License
 

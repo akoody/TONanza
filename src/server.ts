@@ -5,6 +5,7 @@ import { z, ZodError } from "zod";
 import { ChatService, type ChatUserContext } from "./chat/chat.service.js";
 import { env, isDevToolsEnabled } from "./config/env.js";
 import { registerDevRoutes } from "./dev-helper.js";
+import { claimReferralBalance } from "./referrals/referral.service.js";
 import { cancelBetSchema, gameIdParamSchema, placeBetSchema } from "./game/game.schemas.js";
 import { userSyncSchema } from "./game/user.schemas.js";
 import { GameService } from "./game/game.service.js";
@@ -882,58 +883,11 @@ app.get("/v1/referrals/info", async (request, reply) => {
 
 app.post("/v1/referrals/claim", async (request, reply) => {
   const { user } = await getAuthenticatedUser(request);
-
-  if (user.referralBalanceNanotons <= 0n) {
-    throw new AppError(400, "No referral balance to claim");
-  }
-
-  const result = await prisma.$transaction(
-    async (tx) => {
-      const lockedUser = await tx.$queryRaw<LockedUserRow[]>(
-        Prisma.sql`
-          SELECT id, balance_nanotons, referral_balance_nanotons
-          FROM users
-          WHERE id = ${user.id}
-          FOR UPDATE
-        `
-      );
-
-      if (!lockedUser[0]) {
-        throw new AppError(404, "User not found");
-      }
-
-      // the struct doesn't have referral_balance_nanotons explicitly defined in LockedUserRow but we queried it. Let's just update safely
-      const updated = await tx.user.update({
-        where: { id: user.id },
-        data: {
-          balanceNanotons: {
-            increment: user.referralBalanceNanotons
-          },
-          referralBalanceNanotons: 0n
-        },
-        select: {
-          balanceNanotons: true,
-          referralBalanceNanotons: true
-        }
-      });
-
-      return updated;
-    },
-    {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      maxWait: 5_000,
-      timeout: 10_000
-    }
-  );
+  const result = await claimReferralBalance(prisma, user.id);
 
   io.to(`user:${user.id}`).emit("user:balance", result.balanceNanotons.toString());
 
-  return reply.send(
-    toJsonSafe({
-      balanceNanotons: result.balanceNanotons,
-      referralBalanceNanotons: result.referralBalanceNanotons
-    })
-  );
+  return reply.send(toJsonSafe(result));
 });
 
 app.post("/v1/games/:gameId/resolve", async (request, reply) => {
