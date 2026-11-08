@@ -82,7 +82,7 @@ npm run frontend:dev          # Mini App
 ## Known limitations
 
 - Rate limit state lives in process memory, so limits are per instance.
-- `frontend/src/App.tsx` is a large single file that should be split by feature.
+- `frontend/src/App.tsx` still holds the round state machine (spin timing, prize claim, reconnects) in about 1,400 lines.
 - A withdrawal whose outcome could not be determined stays in `PROCESSING` with a note and needs manual review.
 
 ## License

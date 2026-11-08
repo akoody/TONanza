@@ -1,7 +1,6 @@
 import { BootScreen } from "./components/BootScreen";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { Confetti } from "./components/Confetti";
-import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import confetti from "canvas-confetti";
@@ -16,29 +15,41 @@ import { GameHistoryModal, type GameHistoryEntry } from "./components/GameHistor
 import { MenuModal } from "./components/MenuModal";
 import { ReferralModal } from "./components/ReferralModal";
 import { TermsOfUseModal } from "./components/TermsOfUseModal";
-import { cancelBet, claimGamePrize, getActiveGame, getGameHistory, getPaymentHistory, healthCheck, placeBet, resolveGame, syncUser, type GameHistoryEntry as ApiGameHistoryEntry, type PaymentHistoryEntry } from "./lib/api";
-import { formatNanotonsBalance, formatNanotonsCompact, randomColorByUserId } from "./lib/format";
+import { cancelBet, claimGamePrize, getActiveGame, getGameHistory, getPaymentHistory, healthCheck, placeBet, resolveGame, syncUser, type PaymentHistoryEntry } from "./lib/api";
+import { formatNanotonsCompact, randomColorByUserId } from "./lib/format";
 import { ensureTelegramFullscreen, getStartParam, getTelegramUserId, hapticNotificationSuccess, hapticSelectionChanged, initTelegram, isDesktopPlatform, isTWA, openTelegramUrl } from "./lib/telegram";
 import type {
-  ActiveGameResponse,
-  ChatDeleteAck,
-  ChatHistoryAck,
-  ChatMessage,
-  ChatSendAck,
-  ChatToggleAck,
   LiveEvent,
   PlayerChance,
   ResolveResponse
 } from "./types";
-import { ChevronDown, Copy, LogOut, Menu, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { ParticipantsList } from "./components/ParticipantsList";
 import { useToast } from "./components/ui/Toast";
 import { PaymentModal } from "./components/PaymentModal";
-import { TonConnectButton, useTonAddress, useTonConnectUI, useTonWallet } from "@tonconnect/ui-react";
+import { useTonWallet } from "@tonconnect/ui-react";
 import WebApp from "@twa-dev/sdk";
 import { AccessDenied } from "./components/AccessDenied";
+import { AppHeader } from "./components/AppHeader";
+import { FairnessModal } from "./components/FairnessModal";
+import { WinnerModal } from "./components/WinnerModal";
+import { useChat } from "./hooks/useChat";
+import { CHAT_MAX_MESSAGE_LENGTH } from "./lib/chat-protocol";
+import { loadPersistedActiveBetEvents, persistActiveBetEvents } from "./lib/active-bets-cache";
+import { restoreGameHistory, restoreWinners, winnersFromHistory } from "./lib/history-cache";
+import {
+  buildBetEventKey,
+  buildBetEventsFromSnapshot,
+  createBetsSignature,
+  createPlayersSignature,
+  mapGameHistoryEntries,
+  mapPlayersFromSnapshot,
+  mapWinnerHistoryItems,
+  mergeLatestById,
+  sortByAmountDesc
+} from "./lib/round-snapshot";
 import { soundEngine } from "./lib/audio";
-import { parseSafeBigInt, sanitizeAvatarUrl, sanitizeChatText, sanitizeDisplayName } from "./lib/security";
+import { parseSafeBigInt, sanitizeAvatarUrl, sanitizeDisplayName } from "./lib/security";
 
 const ROUND_SECONDS = 40;
 const ROULETTE_SPIN_DURATION_MS = 14_000;
@@ -46,16 +57,8 @@ const MIN_SYNCED_SPIN_DURATION_MS = 800;
 const AUTO_PRIZE_CLAIM_DELAY_MS = 200;
 const AUTO_PRIZE_CLAIM_RETRY_DELAY_MS = 400;
 const AUTO_PRIZE_CLAIM_MAX_ATTEMPTS = 12;
-const CHAT_HISTORY_LIMIT = 100;
-const CHAT_MAX_MESSAGE_LENGTH = 160;
-const DEFAULT_CHAT_COOLDOWN_MS = 10_000;
-const ACTIVE_BETS_CACHE_KEY = "tonanza_active_bet_events_v1";
-const MOBILE_HEADER_TOP_GAP_PX = 52;
 const MOBILE_CONTENT_TOP_GAP_PX = 113;
-const MOBILE_HEADER_PADDING_TOP = `calc(env(safe-area-inset-top, 0px) + ${MOBILE_HEADER_TOP_GAP_PX}px)`;
 const MOBILE_CONTENT_PADDING_TOP = `calc(env(safe-area-inset-top, 0px) + ${MOBILE_CONTENT_TOP_GAP_PX}px)`;
-
-const msToSeconds = (value: number) => Math.max(1, Math.ceil(value / 1000));
 
 const resolveSocketBaseUrl = (): string | undefined => {
   const socketEnv = (import.meta.env.VITE_SOCKET_URL ?? "").trim();
@@ -93,226 +96,6 @@ const isInPaymentModal = (element: Element | null): boolean => {
   return Boolean(element.closest(".payment-modal-overlay"));
 };
 
-type PersistedActiveBetsSnapshot = {
-  gameId: string;
-  totalPotNanotons: string;
-  savedAt: number;
-  entries: Array<{
-    id: string;
-    createdAt: number;
-    data: {
-      userId?: string;
-      username?: string;
-      avatarUrl?: string;
-      amountNanotons?: string;
-      isUser?: boolean;
-    };
-  }>;
-};
-
-const loadPersistedActiveBetEvents = (gameId: string, totalPotNanotons: string): LiveEvent[] => {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(ACTIVE_BETS_CACHE_KEY);
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw) as PersistedActiveBetsSnapshot;
-    if (!parsed || typeof parsed !== "object") return [];
-    if (parsed.gameId !== gameId || parsed.totalPotNanotons !== totalPotNanotons) return [];
-    if (!Array.isArray(parsed.entries) || parsed.entries.length === 0) return [];
-
-    const restoredEvents: LiveEvent[] = [];
-    for (const entry of parsed.entries) {
-      if (!entry || typeof entry !== "object") continue;
-      if (typeof entry.id !== "string" || entry.id.length === 0) continue;
-      if (!Number.isFinite(entry.createdAt) || entry.createdAt <= 0) continue;
-
-      const amount = parseSafeBigInt(entry.data?.amountNanotons);
-      if (amount <= 0n) continue;
-
-      const userId =
-        typeof entry.data?.userId === "string" && entry.data.userId.length > 0
-          ? entry.data.userId
-          : undefined;
-
-      const username = sanitizeDisplayName(
-        entry.data?.username,
-        userId ? `Игрок #${userId.slice(-4)}` : "Игрок"
-      );
-
-      restoredEvents.push({
-        id: entry.id,
-        createdAt: Math.trunc(entry.createdAt),
-        type: "bet",
-        text: "",
-        data: {
-          userId,
-          username,
-          avatarUrl: sanitizeAvatarUrl(entry.data?.avatarUrl),
-          amountNanotons: amount.toString(),
-          isUser: entry.data?.isUser === true
-        }
-      });
-    }
-
-    return restoredEvents;
-  } catch {
-    return [];
-  }
-};
-
-const persistActiveBetEvents = (gameId: string, totalPotNanotons: string, events: LiveEvent[]) => {
-  if (typeof window === "undefined") return;
-
-  const betEntries = events
-    .filter((event) => event.type === "bet")
-    .map((event) => ({
-      id: event.id,
-      createdAt: event.createdAt,
-      data: {
-        userId: event.data?.userId,
-        username: event.data?.username,
-        avatarUrl: event.data?.avatarUrl,
-        amountNanotons: event.data?.amountNanotons,
-        isUser: event.data?.isUser === true
-      }
-    }))
-    .filter((entry) => parseSafeBigInt(entry.data.amountNanotons) > 0n);
-
-  if (betEntries.length === 0) {
-    window.localStorage.removeItem(ACTIVE_BETS_CACHE_KEY);
-    return;
-  }
-
-  const snapshot: PersistedActiveBetsSnapshot = {
-    gameId,
-    totalPotNanotons,
-    savedAt: Date.now(),
-    entries: betEntries
-  };
-
-  window.localStorage.setItem(ACTIVE_BETS_CACHE_KEY, JSON.stringify(snapshot));
-};
-
-const formatWalletAddressShort = (address: string) => {
-  if (!address) return "";
-  if (address.length <= 7) return address;
-  return `${address.slice(0, 3)}...${address.slice(-4)}`;
-};
-
-const sortByAmountDesc = (left: PlayerChance, right: PlayerChance) => {
-  if (left.amountNanotons === right.amountNanotons) return 0;
-  return left.amountNanotons > right.amountNanotons ? -1 : 1;
-};
-
-const mapPlayersFromSnapshot = (rawPlayers: ActiveGameResponse["players"]): PlayerChance[] =>
-  rawPlayers
-    .map((entry) => ({
-      userId: entry.userId,
-      name: sanitizeDisplayName(entry.name, `Игрок #${entry.userId.slice(-4)}`),
-      amountNanotons: parseSafeBigInt(entry.amountNanotons),
-      color: randomColorByUserId(entry.userId),
-      avatarUrl: sanitizeAvatarUrl(entry.avatarUrl)
-    }))
-    .filter((entry) => entry.amountNanotons > 0n)
-    .sort(sortByAmountDesc);
-
-const resolveHistoryTimestamp = (resolvedAt: ApiGameHistoryEntry["resolvedAt"]): number => {
-  const timestamp = resolvedAt ? new Date(resolvedAt).getTime() : NaN;
-  return Number.isFinite(timestamp) ? timestamp : Date.now();
-};
-
-const mapGameHistoryEntries = (history: ApiGameHistoryEntry[]): GameHistoryEntry[] =>
-  history.map((entry) => ({
-    ...entry,
-    players: entry.players.map((player) => ({
-      ...player,
-      amountNanotons: parseSafeBigInt(player.amountNanotons),
-      name: sanitizeDisplayName(player.name, `User #${player.userId.slice(-4)}`),
-      avatarUrl: sanitizeAvatarUrl(player.avatarUrl),
-      color: randomColorByUserId(player.userId)
-    })),
-    totalPotNanotons: parseSafeBigInt(entry.totalPotNanotons),
-    payoutNanotons: parseSafeBigInt(entry.payoutNanotons),
-    timestamp: resolveHistoryTimestamp(entry.resolvedAt),
-    winnerName: sanitizeDisplayName(entry.winnerName, "Unknown")
-  }));
-
-const mapWinnerHistoryItems = (history: ApiGameHistoryEntry[]): WinnerHistoryItem[] =>
-  history.map((entry) => ({
-    id: entry.gameId,
-    username: sanitizeDisplayName(entry.winnerName, "Unknown"),
-    payoutNanotons: parseSafeBigInt(entry.payoutNanotons),
-    avatarUrl: sanitizeAvatarUrl(entry.winnerAvatarUrl),
-    timestamp: resolveHistoryTimestamp(entry.resolvedAt)
-  }));
-
-function mergeLatestById<T extends { timestamp: number }>(
-  items: T[],
-  getId: (item: T) => string,
-  limit: number
-): T[] {
-  const merged = new Map<string, T>();
-
-  for (const item of items) {
-    const id = getId(item);
-    if (!id) continue;
-
-    const existing = merged.get(id);
-    if (!existing || item.timestamp >= existing.timestamp) {
-      merged.set(id, item);
-    }
-  }
-
-  return [...merged.values()]
-    .sort((left, right) => right.timestamp - left.timestamp)
-    .slice(0, limit);
-}
-
-const buildBetEventsFromSnapshot = (
-  bets: NonNullable<ActiveGameResponse["bets"]>,
-  myId: string
-): LiveEvent[] =>
-  bets.map((bet, index) => {
-    const createdAt = new Date(bet.createdAt).getTime();
-    return {
-      id: `initial-bet-${bet.betId}`,
-      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now() - index,
-      type: "bet",
-      text: "",
-      data: {
-        userId: bet.userId,
-        username: sanitizeDisplayName(bet.username, `Игрок #${bet.userId.slice(-4)}`),
-        avatarUrl: sanitizeAvatarUrl(bet.avatarUrl),
-        amountNanotons: parseSafeBigInt(bet.amountNanotons).toString(),
-        isUser: bet.userId === myId
-      }
-    };
-  });
-
-const createPlayersSignature = (rawPlayers: ActiveGameResponse["players"]): string =>
-  rawPlayers
-    .map((entry) => `${entry.userId}:${entry.amountNanotons}`)
-    .sort()
-    .join("|");
-
-const createBetsSignature = (bets: NonNullable<ActiveGameResponse["bets"]>): string =>
-  bets
-    .map((bet) => `${bet.betId}:${bet.userId}:${bet.amountNanotons}:${bet.createdAt}`)
-    .join("|");
-
-const buildBetEventKey = (payload: {
-  gameId?: string;
-  betId?: string;
-  userId: string;
-  ticketStart: string;
-  ticketEnd: string;
-}): string => {
-  if (payload.betId) return `${payload.gameId ?? "unknown"}:${payload.betId}`;
-  return `${payload.gameId ?? "unknown"}:${payload.userId}:${payload.ticketStart}:${payload.ticketEnd}`;
-};
-
 const createAvatarDataUrl = (name: string, color: string) => {
   const initialsSource = sanitizeDisplayName(name, "U").replace(/[^\\p{L}\\p{N}]/gu, "");
   const initials = (initialsSource.slice(0, 2).toUpperCase() || "U").slice(0, 2);
@@ -329,172 +112,6 @@ const createAvatarDataUrl = (name: string, color: string) => {
   </svg>
   `;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-};
-
-const normalizeChatMessage = (payload: unknown): ChatMessage | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-
-  if (typeof source.id !== "string" || source.id.length === 0 || source.id.length > 128) return null;
-  if (typeof source.userId !== "string" || source.userId.length === 0 || source.userId.length > 128) return null;
-
-  const createdAtRaw = source.createdAt;
-  const createdAt =
-    typeof createdAtRaw === "number"
-      ? Math.trunc(createdAtRaw)
-      : typeof createdAtRaw === "string" && /^\d{1,16}$/.test(createdAtRaw)
-        ? Number(createdAtRaw)
-        : NaN;
-
-  if (!Number.isFinite(createdAt) || createdAt <= 0) return null;
-
-  const username = sanitizeDisplayName(source.username, `User #${source.userId.slice(-4)}`);
-  const text = sanitizeChatText(source.text, CHAT_MAX_MESSAGE_LENGTH);
-  if (!text) return null;
-
-  return {
-    id: source.id,
-    userId: source.userId,
-    username,
-    avatarUrl: sanitizeAvatarUrl(source.avatarUrl),
-    text,
-    createdAt
-  };
-};
-
-const normalizeChatSendAck = (payload: unknown): ChatSendAck | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-
-  if (source.ok === true) {
-    const message = normalizeChatMessage(source.message);
-    if (!message) return null;
-    if (typeof source.nextMessageAtMs !== "number" || !Number.isFinite(source.nextMessageAtMs)) return null;
-    return {
-      ok: true,
-      message,
-      nextMessageAtMs: Math.trunc(source.nextMessageAtMs)
-    };
-  }
-
-  if (source.ok !== false || typeof source.error !== "string" || typeof source.code !== "string") {
-    return null;
-  }
-
-  const knownCodes = [
-    "UNAUTHORIZED",
-    "INVALID_PAYLOAD",
-    "EMPTY_MESSAGE",
-    "COOLDOWN",
-    "RATE_LIMIT",
-    "MUTED",
-    "STOPPED"
-  ] as const;
-  type KnownCode = (typeof knownCodes)[number];
-  const code: KnownCode = (knownCodes as readonly string[]).includes(source.code)
-    ? (source.code as KnownCode)
-    : "INVALID_PAYLOAD";
-
-  const retryAfterMs =
-    typeof source.retryAfterMs === "number" && Number.isFinite(source.retryAfterMs) && source.retryAfterMs > 0
-      ? Math.trunc(source.retryAfterMs)
-      : undefined;
-  const mutedUntilMs =
-    typeof source.mutedUntilMs === "number" && Number.isFinite(source.mutedUntilMs) && source.mutedUntilMs > 0
-      ? Math.trunc(source.mutedUntilMs)
-      : undefined;
-
-  return {
-    ok: false,
-    code,
-    error: source.error,
-    retryAfterMs,
-    mutedUntilMs
-  };
-};
-
-const normalizeChatHistoryAck = (payload: unknown): ChatHistoryAck | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-
-  if (source.ok === true && Array.isArray(source.messages)) {
-    const messages = source.messages
-      .map((item) => normalizeChatMessage(item))
-      .filter((item): item is ChatMessage => item !== null)
-      .slice(-CHAT_HISTORY_LIMIT);
-    return {
-      ok: true,
-      messages
-    };
-  }
-
-  if (source.ok === false && typeof source.code === "string" && typeof source.error === "string") {
-    return {
-      ok: false,
-      code: source.code,
-      error: source.error
-    };
-  }
-
-  return null;
-};
-
-const normalizeChatDeleteAck = (payload: unknown): ChatDeleteAck | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-
-  if (source.ok === true && typeof source.messageId === "string") {
-    return {
-      ok: true,
-      messageId: source.messageId
-    };
-  }
-
-  if (source.ok === false && typeof source.code === "string" && typeof source.error === "string") {
-    return {
-      ok: false,
-      code: source.code,
-      error: source.error
-    };
-  }
-
-  return null;
-};
-
-const normalizeChatToggleAck = (payload: unknown): ChatToggleAck | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-
-  if (source.ok === true && typeof source.sendingEnabled === "boolean") {
-    return {
-      ok: true,
-      sendingEnabled: source.sendingEnabled
-    };
-  }
-
-  if (source.ok === false && typeof source.code === "string" && typeof source.error === "string") {
-    return {
-      ok: false,
-      code: source.code,
-      error: source.error
-    };
-  }
-
-  return null;
-};
-
-const normalizeChatStatusPayload = (payload: unknown): { sendingEnabled: boolean } | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-  if (typeof source.sendingEnabled !== "boolean") return null;
-  return { sendingEnabled: source.sendingEnabled };
-};
-
-const normalizeChatRolePayload = (payload: unknown): { isAdmin: boolean } | null => {
-  if (!payload || typeof payload !== "object") return null;
-  const source = payload as Record<string, unknown>;
-  if (typeof source.isAdmin !== "boolean") return null;
-  return { isAdmin: source.isAdmin };
 };
 
 export default function App() {
@@ -545,19 +162,12 @@ export default function App() {
   const [paymentHistory, setPaymentHistory] = useState<PaymentHistoryEntry[]>([]);
   const [selectedHistoryGame, setSelectedHistoryGame] = useState<GameHistoryEntry | null>(null);
   const [onlineUsers, setOnlineUsers] = useState(1);
-  const [isWalletDropdownOpen, setIsWalletDropdownOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [isSendingChat, setIsSendingChat] = useState(false);
-  const [isTogglingChat, setIsTogglingChat] = useState(false);
-  const [chatCooldownUntilMs, setChatCooldownUntilMs] = useState(0);
-  const [chatMutedUntilMs, setChatMutedUntilMs] = useState(0);
-  const [chatClockMs, setChatClockMs] = useState(Date.now());
-  const [isChatAdmin, setIsChatAdmin] = useState(false);
-  const [isChatSendingEnabled, setIsChatSendingEnabled] = useState(true);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
 
   const socketBaseUrl = useMemo(() => resolveSocketBaseUrl(), []);
   const socketRef = useRef<Socket | null>(null);
+  const chat = useChat(socketRef);
+  const { bindChatSocket, resetChatRole } = chat;
   const resolvedRoundRef = useRef<string | null>(null);
   const activeGameIdRef = useRef<string | null>(null);
   const processedBetKeysRef = useRef<Set<string>>(new Set());
@@ -570,7 +180,6 @@ export default function App() {
   const roundEndsAtMsRef = useRef<number>(roundEndsAtMs);
   const lastPlayersSignatureRef = useRef<string>("");
   const lastBetsSignatureRef = useRef<string>("");
-  const walletDropdownRef = useRef<HTMLDivElement | null>(null);
 
   const triggerSelectionHaptic = useCallback(() => {
     if (isHapticsEnabled) hapticSelectionChanged();
@@ -581,64 +190,12 @@ export default function App() {
   }, [isHapticsEnabled]);
 
   // TON Connect wallet — sync address to backend when it changes
-  const [tonConnectUI] = useTonConnectUI();
   const tonWallet = useTonWallet();
-  const tonAddress = useTonAddress();
-  const compactTonAddress = useMemo(() => formatWalletAddressShort(tonAddress), [tonAddress]);
 
   useEffect(() => {
     if (appAccessAllowed) return;
     document.getElementById("static-splash")?.remove();
   }, [appAccessAllowed]);
-
-  useEffect(() => {
-    if (!tonWallet) {
-      setIsWalletDropdownOpen(false);
-    }
-  }, [tonWallet]);
-
-  useEffect(() => {
-    if (!isWalletDropdownOpen) return;
-
-    const onPointerDownOutside = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node | null;
-      if (!target || walletDropdownRef.current?.contains(target)) return;
-      setIsWalletDropdownOpen(false);
-    };
-
-    document.addEventListener("mousedown", onPointerDownOutside);
-    document.addEventListener("touchstart", onPointerDownOutside);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDownOutside);
-      document.removeEventListener("touchstart", onPointerDownOutside);
-    };
-  }, [isWalletDropdownOpen]);
-
-  const handleCopyWalletAddress = useCallback(async () => {
-    if (!tonAddress) return;
-    try {
-      await navigator.clipboard.writeText(tonAddress);
-      triggerSuccessHaptic();
-      toast("Адрес кошелька скопирован", "success", 2200);
-    } catch (e) {
-      console.error("[wallet] failed to copy address", e);
-      toast("Не удалось скопировать адрес", "error");
-    } finally {
-      setIsWalletDropdownOpen(false);
-    }
-  }, [tonAddress, toast, triggerSuccessHaptic]);
-
-  const handleDisconnectWallet = useCallback(async () => {
-    try {
-      await tonConnectUI?.disconnect();
-      toast("Кошелек отключен", "info", 2200);
-    } catch (e) {
-      console.error("[wallet] failed to disconnect", e);
-      toast("Не удалось отключить кошелек", "error");
-    } finally {
-      setIsWalletDropdownOpen(false);
-    }
-  }, [tonConnectUI, toast]);
 
   useEffect(() => {
     if (!appAccessAllowed) return;
@@ -929,225 +486,6 @@ export default function App() {
   const restoreViewport = useCallback(() => {
     ensureTelegramFullscreen([0, 120, 320, 900]);
   }, []);
-
-  const applyChatPenalty = useCallback((retryAfterMs?: number, mutedUntilMs?: number) => {
-    const now = Date.now();
-    setChatClockMs(now);
-
-    if (typeof mutedUntilMs === "number" && mutedUntilMs > now) {
-      setChatMutedUntilMs((prev) => Math.max(prev, mutedUntilMs));
-    }
-
-    if (typeof retryAfterMs === "number" && retryAfterMs > 0) {
-      const target = now + retryAfterMs;
-      setChatCooldownUntilMs((prev) => Math.max(prev, target));
-    }
-  }, []);
-
-  const handleChatErrorAck = useCallback((errorAck: Exclude<ChatSendAck, { ok: true }>) => {
-    if (errorAck.code === "COOLDOWN" || errorAck.code === "RATE_LIMIT" || errorAck.code === "MUTED") {
-      applyChatPenalty(errorAck.retryAfterMs, errorAck.mutedUntilMs);
-    }
-
-    const retrySec = errorAck.retryAfterMs ? msToSeconds(errorAck.retryAfterMs) : 0;
-    if (errorAck.code === "STOPPED") {
-      setIsChatSendingEnabled(false);
-      toast("Чат остановлен админом", "warning", 2400);
-      return;
-    }
-
-    if (errorAck.code === "COOLDOWN") {
-      toast(`Подождите ${retrySec}с перед следующим сообщением`, "warning", 2200);
-      return;
-    }
-
-    if (errorAck.code === "MUTED") {
-      toast(
-        retrySec > 0 ? `Чат временно заблокирован на ${retrySec}с` : "Чат временно заблокирован",
-        "error",
-        2600
-      );
-      return;
-    }
-
-    if (errorAck.code === "RATE_LIMIT") {
-      toast(`Слишком часто. Повторите через ${retrySec}с`, "warning", 2400);
-      return;
-    }
-
-    if (errorAck.code === "UNAUTHORIZED") {
-      toast("Чат недоступен: авторизация не подтверждена", "error");
-      return;
-    }
-
-    if (errorAck.code === "EMPTY_MESSAGE") {
-      toast("Введите сообщение", "warning", 1800);
-      return;
-    }
-
-    toast("Не удалось отправить сообщение", "error");
-  }, [applyChatPenalty, toast]);
-
-  const sendChatMessage = useCallback(async (rawText: string) => {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected) {
-      toast("Чат временно недоступен", "error");
-      return;
-    }
-
-    if (!isChatSendingEnabled) {
-      toast("Чат остановлен админом", "warning", 2400);
-      return;
-    }
-
-    const text = sanitizeChatText(rawText, CHAT_MAX_MESSAGE_LENGTH);
-    if (!text) {
-      toast("Введите сообщение", "warning", 1800);
-      return;
-    }
-
-    const now = Date.now();
-    if (chatMutedUntilMs > now) {
-      const retrySec = msToSeconds(chatMutedUntilMs - now);
-      toast(`Чат временно заблокирован на ${retrySec}с`, "error", 2600);
-      return;
-    }
-
-    if (chatCooldownUntilMs > now) {
-      const retrySec = msToSeconds(chatCooldownUntilMs - now);
-      toast(`Подождите ${retrySec}с перед следующим сообщением`, "warning", 2200);
-      return;
-    }
-
-    setIsSendingChat(true);
-    try {
-      const ack = await new Promise<ChatSendAck | null>((resolve) => {
-        let resolved = false;
-        const timeoutId = window.setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          resolve(null);
-        }, 5000);
-
-        socket.emit("chat:send", { text }, (response: unknown) => {
-          if (resolved) return;
-          resolved = true;
-          window.clearTimeout(timeoutId);
-          resolve(normalizeChatSendAck(response));
-        });
-      });
-
-      if (!ack) {
-        toast("Чат не ответил. Попробуйте еще раз", "error");
-        return;
-      }
-
-      if (!ack.ok) {
-        handleChatErrorAck(ack);
-        return;
-      }
-
-      setChatClockMs(Date.now());
-      const nextAllowedAtMs =
-        Number.isFinite(ack.nextMessageAtMs) && ack.nextMessageAtMs > 0
-          ? ack.nextMessageAtMs
-          : Date.now() + DEFAULT_CHAT_COOLDOWN_MS;
-      setChatCooldownUntilMs((prev) => Math.max(prev, nextAllowedAtMs));
-      setChatMessages((prev) => {
-        if (prev.some((entry) => entry.id === ack.message.id)) return prev;
-        return [...prev, ack.message].slice(-CHAT_HISTORY_LIMIT);
-      });
-    } finally {
-      setIsSendingChat(false);
-    }
-  }, [chatCooldownUntilMs, chatMutedUntilMs, handleChatErrorAck, isChatSendingEnabled, toast]);
-
-  const deleteChatMessage = useCallback(async (messageId: string) => {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected) {
-      toast("Нет соединения с чатом", "error", 2200);
-      return;
-    }
-
-    if (!isChatAdmin) {
-      toast("Недостаточно прав", "error", 2200);
-      return;
-    }
-
-    const ack = await new Promise<ChatDeleteAck | null>((resolve) => {
-      let resolved = false;
-      const timeoutId = window.setTimeout(() => {
-        if (resolved) return;
-        resolved = true;
-        resolve(null);
-      }, 5000);
-
-      socket.emit("chat:delete", { messageId }, (response: unknown) => {
-        if (resolved) return;
-        resolved = true;
-        window.clearTimeout(timeoutId);
-        resolve(normalizeChatDeleteAck(response));
-      });
-    });
-
-    if (!ack) {
-      toast("Сервер чата не ответил", "error", 2200);
-      return;
-    }
-
-    if (!ack.ok) {
-      toast(ack.error || "Не удалось удалить сообщение", "error", 2400);
-      return;
-    }
-
-    setChatMessages((prev) => prev.filter((entry) => entry.id !== ack.messageId));
-  }, [isChatAdmin, toast]);
-
-  const toggleChatSending = useCallback(async () => {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected) {
-      toast("Нет соединения с чатом", "error", 2200);
-      return;
-    }
-
-    if (!isChatAdmin || isTogglingChat) {
-      return;
-    }
-
-    setIsTogglingChat(true);
-    try {
-      const ack = await new Promise<ChatToggleAck | null>((resolve) => {
-        let resolved = false;
-        const timeoutId = window.setTimeout(() => {
-          if (resolved) return;
-          resolved = true;
-          resolve(null);
-        }, 5000);
-
-        socket.emit("chat:toggle", { enabled: !isChatSendingEnabled }, (response: unknown) => {
-          if (resolved) return;
-          resolved = true;
-          window.clearTimeout(timeoutId);
-          resolve(normalizeChatToggleAck(response));
-        });
-      });
-
-      if (!ack) {
-        toast("Сервер чата не ответил", "error", 2200);
-        return;
-      }
-
-      if (!ack.ok) {
-        toast(ack.error || "Не удалось изменить режим чата", "error", 2400);
-        return;
-      }
-
-      setIsChatSendingEnabled(ack.sendingEnabled);
-      toast(ack.sendingEnabled ? "Чат включен" : "Чат остановлен", "info", 2200);
-    } finally {
-      setIsTogglingChat(false);
-    }
-  }, [isChatAdmin, isChatSendingEnabled, isTogglingChat, toast]);
 
   const handleResolveResult = useCallback((resolved: ResolveResponse) => {
     const activeRoundId = activeGameIdRef.current;
@@ -1459,51 +797,8 @@ export default function App() {
     localStorage.setItem("tonanza_user_id", resolvedUser);
 
     // STATE PERSISTENCE: Restore history and game data
-    const savedWinners = localStorage.getItem("tonanza_recent_winners");
-    if (savedWinners) {
-      try {
-        const parsed = JSON.parse(savedWinners);
-        if (Array.isArray(parsed)) {
-          setRecentWinners(parsed.slice(0, 20).map((winner: any) => ({
-            id: typeof winner?.id === "string" ? winner.id : createEventId(),
-            username: sanitizeDisplayName(winner?.username, "Unknown"),
-            payoutNanotons: parseSafeBigInt(winner?.payoutNanotons),
-            avatarUrl: sanitizeAvatarUrl(winner?.avatarUrl),
-            timestamp: typeof winner?.timestamp === "number" ? winner.timestamp : Date.now()
-          })));
-        }
-      } catch (e) {
-        console.warn("Failed to restore winners", e);
-      }
-    }
-
-    const savedHistory = localStorage.getItem("tonanza_game_history");
-    if (savedHistory) {
-      try {
-        const parsed = JSON.parse(savedHistory);
-        if (Array.isArray(parsed)) {
-          setGameHistory(parsed.slice(0, 30).map((game: any) => ({
-            gameId: typeof game?.gameId === "string" ? game.gameId : createEventId(),
-            players: Array.isArray(game?.players)
-              ? game.players.map((player: any) => ({
-                userId: typeof player?.userId === "string" ? player.userId : "0",
-                name: sanitizeDisplayName(player?.name, "Unknown"),
-                amountNanotons: parseSafeBigInt(player?.amountNanotons),
-                color: randomColorByUserId(typeof player?.userId === "string" ? player.userId : "0"),
-                avatarUrl: sanitizeAvatarUrl(player?.avatarUrl)
-              }))
-              : [],
-            winnerId: typeof game?.winnerId === "string" ? game.winnerId : null,
-            winnerName: sanitizeDisplayName(game?.winnerName, "Unknown"),
-            totalPotNanotons: parseSafeBigInt(game?.totalPotNanotons),
-            payoutNanotons: parseSafeBigInt(game?.payoutNanotons),
-            timestamp: typeof game?.timestamp === "number" ? game.timestamp : Date.now()
-          })));
-        }
-      } catch (e) {
-        console.warn("Failed to restore history", e);
-      }
-    }
+    setRecentWinners(restoreWinners(localStorage.getItem("tonanza_recent_winners")));
+    setGameHistory(restoreGameHistory(localStorage.getItem("tonanza_game_history")));
 
     void (async () => {
       try {
@@ -1620,40 +915,10 @@ export default function App() {
   // Initial History Fetch & Persistence
   useEffect(() => {
     // 1. Load from local first (fastest)
-    const saved = localStorage.getItem("tonanza_game_history");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const restoredHistory = Array.isArray(parsed)
-          ? parsed.slice(0, 30).map((game: any) => ({
-            gameId: typeof game?.gameId === "string" ? game.gameId : createEventId(),
-            players: Array.isArray(game?.players)
-              ? game.players.map((player: any) => ({
-                userId: typeof player?.userId === "string" ? player.userId : "0",
-                name: sanitizeDisplayName(player?.name, "Unknown"),
-                amountNanotons: parseSafeBigInt(player?.amountNanotons),
-                color: randomColorByUserId(typeof player?.userId === "string" ? player.userId : "0"),
-                avatarUrl: sanitizeAvatarUrl(player?.avatarUrl)
-              }))
-              : [],
-            winnerId: typeof game?.winnerId === "string" ? game.winnerId : null,
-            winnerName: sanitizeDisplayName(game?.winnerName, "Unknown"),
-            totalPotNanotons: parseSafeBigInt(game?.totalPotNanotons),
-            payoutNanotons: parseSafeBigInt(game?.payoutNanotons),
-            timestamp: typeof game?.timestamp === "number" ? game.timestamp : Date.now()
-          }))
-          : [];
-        setGameHistory(restoredHistory);
-        setRecentWinners(restoredHistory.slice(0, 10).map((h: any) => ({
-          id: h.gameId,
-          username: sanitizeDisplayName(h.winnerName, "Unknown"),
-          payoutNanotons: h.payoutNanotons,
-          avatarUrl: sanitizeAvatarUrl(h.winnerAvatarUrl),
-          timestamp: h.timestamp || Date.now()
-        })));
-      } catch (e) {
-        console.warn("Failed to restore history", e);
-      }
+    const restoredHistory = restoreGameHistory(localStorage.getItem("tonanza_game_history"));
+    if (restoredHistory.length > 0) {
+      setGameHistory(restoredHistory);
+      setRecentWinners(winnersFromHistory(restoredHistory));
     }
 
     // 2. Fetch from backend (authoritative)
@@ -1683,20 +948,6 @@ export default function App() {
   }, [isSoundEnabled]);
 
   useEffect(() => {
-    const now = Date.now();
-    if (chatCooldownUntilMs <= now && chatMutedUntilMs <= now) {
-      setChatClockMs(now);
-      return;
-    }
-
-    setChatClockMs(now);
-    const interval = window.setInterval(() => {
-      setChatClockMs(Date.now());
-    }, 250);
-    return () => window.clearInterval(interval);
-  }, [chatCooldownUntilMs, chatMutedUntilMs]);
-
-  useEffect(() => {
     if (!appAccessAllowed) {
       socketRef.current?.disconnect();
       socketRef.current = null;
@@ -1715,25 +966,7 @@ export default function App() {
     });
     socketRef.current = socket;
     setIsSocketConnected(socket.connected);
-
-    const requestChatHistory = () => {
-      socket.emit("chat:getHistory", (response: unknown) => {
-        const ack = normalizeChatHistoryAck(response);
-        if (!ack || !ack.ok) return;
-        setChatMessages(ack.messages.slice(-CHAT_HISTORY_LIMIT));
-      });
-    };
-
-    const requestChatStatus = () => {
-      socket.emit("chat:getStatus", (response: unknown) => {
-        if (!response || typeof response !== "object") return;
-        const source = response as Record<string, unknown>;
-        if (source.ok !== true) return;
-        const status = normalizeChatStatusPayload(source);
-        if (!status) return;
-        setIsChatSendingEnabled(status.sendingEnabled);
-      });
-    };
+    const refreshChat = bindChatSocket(socket);
 
     socket.on("game:state", (gameState) => {
       // Sync global state every second or so
@@ -1824,61 +1057,21 @@ export default function App() {
 
     socket.on("connect", () => {
       setIsSocketConnected(true);
-      requestChatHistory();
-      requestChatStatus();
+      refreshChat();
     });
     socket.on("disconnect", () => {
       setIsSocketConnected(false);
     });
-    socket.on("chat:history", (payload: unknown) => {
-      if (!Array.isArray(payload)) return;
-      const normalized = payload
-        .map((entry) => normalizeChatMessage(entry))
-        .filter((entry): entry is ChatMessage => entry !== null)
-        .slice(-CHAT_HISTORY_LIMIT);
-      setChatMessages(normalized);
-    });
-    socket.on("chat:new", (payload: unknown) => {
-      const message = normalizeChatMessage(payload);
-      if (!message) return;
-      setChatMessages((prev) => {
-        if (prev.some((entry) => entry.id === message.id)) return prev;
-        return [...prev, message].slice(-CHAT_HISTORY_LIMIT);
-      });
-    });
-    socket.on("chat:deleted", (payload: unknown) => {
-      if (!payload || typeof payload !== "object") return;
-      const source = payload as Record<string, unknown>;
-      if (typeof source.messageId !== "string" || source.messageId.length === 0) return;
-      setChatMessages((prev) => prev.filter((entry) => entry.id !== source.messageId));
-    });
-    socket.on("chat:status", (payload: unknown) => {
-      const status = normalizeChatStatusPayload(payload);
-      if (!status) return;
-      setIsChatSendingEnabled(status.sendingEnabled);
-    });
-    socket.on("chat:role", (payload: unknown) => {
-      const role = normalizeChatRolePayload(payload);
-      if (!role) return;
-      setIsChatAdmin(role.isAdmin);
-    });
-    socket.on("chat:error", (payload: unknown) => {
-      const ack = normalizeChatSendAck(payload);
-      if (!ack || ack.ok) return;
-      handleChatErrorAck(ack);
-    });
-
     socket.on("game:resolved", handleResolveResult);
     socket.on("online_users", (count: number) => setOnlineUsers(count));
-    requestChatHistory();
-    requestChatStatus();
+    refreshChat();
     return () => {
       socket.disconnect();
       socketRef.current = null;
       setIsSocketConnected(false);
-      setIsChatAdmin(false);
+      resetChatRole();
     };
-  }, [appAccessAllowed, handleResolveResult, handleChatErrorAck, socketBaseUrl, upsertPlayerBet, userId, serverUserId, handleBetCancelled, upsertBetEvent]);
+  }, [appAccessAllowed, handleResolveResult, bindChatSocket, resetChatRole, socketBaseUrl, upsertPlayerBet, userId, serverUserId, handleBetCancelled, upsertBetEvent]);
 
   useEffect(() => {
     if (!countdownStarted) {
@@ -1906,8 +1099,6 @@ export default function App() {
     if (winnerUserId || isResolvingRound || isSubmittingBet || isCancellingBet) return false;
     return players[0].userId === effectiveUserId && players[0].amountNanotons > 0n;
   }, [effectiveUserId, isCancellingBet, isResolvingRound, isSubmittingBet, players, winnerUserId]);
-  const chatCooldownMsLeft = Math.max(0, chatCooldownUntilMs - chatClockMs);
-  const chatMutedMsLeft = Math.max(0, chatMutedUntilMs - chatClockMs);
 
   const placeBetAction = async (amount: bigint) => {
     if (!activeGameId) return;
@@ -2007,137 +1198,18 @@ export default function App() {
         <div className="absolute inset-0 bg-neon-grid bg-[length:30px_30px] opacity-20 pointer-events-none" />
         <div className="absolute top-0 left-0 w-full h-1/2 bg-gradient-to-b from-cyan-500/5 to-transparent pointer-events-none" />
 
-        {/* A. HEADER (Fixed Top) */}
-        <div
-          className={`fixed top-0 left-0 right-0 max-w-md mx-auto z-50 bg-teal-950/80 backdrop-blur-md border-b border-cyan-400/10 flex items-center justify-between px-4 ${isDesktop ? "py-3" : "pb-3"}`}
-          style={isDesktop ? undefined : { paddingTop: MOBILE_HEADER_PADDING_TOP }}
-        >
-        {/* Left: Balance with Wallet Controls */}
-        <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-xl border border-white/5">
-          <div className="flex flex-col leading-none">
-            <span className="text-[9px] text-white/40 uppercase font-bold">Баланс</span>
-            <span className="text-sm font-mono font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 drop-shadow-[0_0_10px_rgba(251,191,36,0.4)]">
-              {formatNanotonsBalance(localBalanceNanotons).replace(" TON", "")}
-            </span>
-          </div>
-          <div className="flex gap-1">
-            <button
-              onClick={() => {
-                triggerSelectionHaptic();
-                soundEngine.playUiClick();
-                setPaymentModalMode("deposit");
-                setIsPaymentModalOpen(true);
-              }}
-              className="w-6 h-6 rounded bg-gradient-to-br from-emerald-500 to-teal-600 hover:brightness-110 active:scale-95 transition-all duration-200 ease-out flex items-center justify-center text-white font-bold text-xs"
-              title="Депозит"
-            >
-              +
-            </button>
-            <button
-              onClick={() => {
-                triggerSelectionHaptic();
-                soundEngine.playUiClick();
-                setPaymentModalMode("withdraw");
-                setIsPaymentModalOpen(true);
-              }}
-              className="w-6 h-6 rounded bg-gradient-to-br from-rose-500 to-orange-600 hover:brightness-110 active:scale-95 transition-all duration-200 ease-out flex items-center justify-center text-white font-bold text-xs"
-              title="Вывод"
-            >
-              −
-            </button>
-          </div>
-        </div>
-
-        {/* Center: Wallet Connect */}
-        <div className="scale-75 origin-center">
-          {!tonWallet ? (
-            <TonConnectButton className="wallet-connect-compact" />
-          ) : (
-            <div ref={walletDropdownRef} className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  triggerSelectionHaptic();
-                  soundEngine.playUiClick();
-                  setIsWalletDropdownOpen((prev) => !prev);
-                }}
-                className="h-10 w-[142px] rounded-xl border border-white/10 bg-white/5 px-3 text-white shadow-[0_4px_16px_rgba(2,6,23,0.5)] transition-all hover:bg-white/10 active:scale-95 flex items-center justify-between gap-1.5"
-                aria-label="Меню кошелька"
-                aria-expanded={isWalletDropdownOpen}
-              >
-                <span className="font-mono text-[14px] font-semibold leading-none">
-                  {compactTonAddress}
-                </span>
-                <ChevronDown
-                  size={14}
-                  className={`text-white/70 transition-transform ${isWalletDropdownOpen ? "rotate-180" : ""}`}
-                />
-              </button>
-
-              <AnimatePresence mode="wait" initial={false}>
-                {isWalletDropdownOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                    className="absolute right-0 top-full mt-2 w-40 overflow-hidden rounded-xl border border-white/10 bg-slate-950/95 backdrop-blur-xl shadow-[0_14px_30px_rgba(2,6,23,0.65)]"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        triggerSelectionHaptic();
-                        soundEngine.playUiClick();
-                        void handleCopyWalletAddress();
-                      }}
-                      className="w-full px-3 py-2.5 text-left text-sm text-white/85 hover:bg-white/10 transition-all duration-200 ease-out active:scale-[0.99] flex items-center gap-2"
-                    >
-                      <Copy size={14} />
-                      Копировать
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        triggerSelectionHaptic();
-                        soundEngine.playUiClick();
-                        void handleDisconnectWallet();
-                      }}
-                      className="w-full px-3 py-2.5 text-left text-sm text-rose-300 hover:bg-rose-500/10 transition-all duration-200 ease-out active:scale-[0.99] flex items-center gap-2"
-                    >
-                      <LogOut size={14} />
-                      Отключить
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Online Badge + Menu */}
-        <div className="flex items-center gap-3">
-          {/* Online Badge */}
-          <div className="flex items-center gap-1.5 bg-white/5 px-2 py-1 rounded-full border border-white/5">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(52,211,153,0.8)] animate-pulse" />
-            <span className="text-xs font-mono font-bold text-white/80">
-              {onlineUsers}
-            </span>
-          </div>
-
-          {/* Menu Button */}
-          <button
-            onClick={() => {
-              triggerSelectionHaptic();
-              soundEngine.playUiClick();
-              setIsMenuOpen(true);
-            }}
-            className="p-2 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 active:scale-95 transition-all duration-200 ease-out"
-            aria-label="Открыть меню"
-          >
-            <Menu size={18} />
-          </button>
-        </div>
-        </div>
+        <AppHeader
+          isDesktop={isDesktop}
+          balanceNanotons={localBalanceNanotons}
+          onlineUsers={onlineUsers}
+          onSelectionHaptic={triggerSelectionHaptic}
+          onSuccessHaptic={triggerSuccessHaptic}
+          onOpenPayment={(mode) => {
+            setPaymentModalMode(mode);
+            setIsPaymentModalOpen(true);
+          }}
+          onOpenMenu={() => setIsMenuOpen(true)}
+        />
 
         {/* B. SCROLLABLE CONTENT AREA */}
         <div
@@ -2191,19 +1263,19 @@ export default function App() {
 
           {/* 5. In-Game Chat */}
           <GameChat
-            messages={chatMessages}
+            messages={chat.messages}
             currentUserId={effectiveUserId}
             isConnected={isSocketConnected}
-            isSending={isSendingChat}
-            isSendingEnabled={isChatSendingEnabled}
-            isAdmin={isChatAdmin}
-            isTogglingChat={isTogglingChat}
-            cooldownMsLeft={chatCooldownMsLeft}
-            mutedMsLeft={chatMutedMsLeft}
+            isSending={chat.isSending}
+            isSendingEnabled={chat.isSendingEnabled}
+            isAdmin={chat.isAdmin}
+            isTogglingChat={chat.isToggling}
+            cooldownMsLeft={chat.cooldownMsLeft}
+            mutedMsLeft={chat.mutedMsLeft}
             maxMessageLength={CHAT_MAX_MESSAGE_LENGTH}
-            onSend={sendChatMessage}
-            onDeleteMessage={deleteChatMessage}
-            onToggleChat={toggleChatSending}
+            onSend={chat.send}
+            onDeleteMessage={chat.deleteMessage}
+            onToggleChat={chat.toggleSending}
             onViewportRestore={restoreViewport}
           />
 
@@ -2223,49 +1295,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* Fairness Modal Overlay */}
-      <AnimatePresence>
-        {showFairness && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
-            onClick={() => setShowFairness(false)}
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.975, y: 14 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.985, y: 10 }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className="bg-slate-900 border border-white/10 p-6 rounded-2xl max-w-sm w-full"
-              onClick={e => e.stopPropagation()}
-            >
-              <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-                <ShieldCheck className="text-cyan-400" /> Честная игра
-              </h3>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-xs text-white/50 uppercase block mb-1">Хэш серверного сида</label>
-                  <div className="bg-black/50 p-2 rounded text-xs font-mono break-all text-white/80 border border-white/5">
-                    {serverSeedHash}
-                  </div>
-                </div>
-                <p className="text-xs text-white/40 leading-relaxed">
-                  Эта игра использует доказуемо честную систему. Серверный сид генерируется перед началом раунда и хэшируется. Вы можете проверить результат после окончания раунда.
-                </p>
-                <button
-                  onClick={() => setShowFairness(false)}
-                  className="w-full py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold text-sm transition-all duration-200 ease-out active:scale-[0.99]"
-                >
-                  Закрыть
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <FairnessModal isOpen={showFairness} serverSeedHash={serverSeedHash} onClose={() => setShowFairness(false)} />
 
       {/* C. BETTING DOCK (Fixed Bottom) */}
       <div className="relative z-10 w-full">
@@ -2283,45 +1313,13 @@ export default function App() {
       {/* CONFETTI */}
       <Confetti active={showWinnerModal} duration={4000} />
 
-      {/* WINNING MOMENT OVERLAY */}
       {showWinnerModal && (
-        <div className="fixed inset-0 z-[220] bg-black/85 backdrop-blur-md">
-          <div className="mx-auto flex h-full w-full max-w-md items-center justify-center p-4">
-            <div className="relative w-full max-w-sm overflow-hidden rounded-[2rem] border border-amber-300/60 bg-slate-900 text-center text-white shadow-[0_0_50px_rgba(255,215,0,0.3)]">
-              <div className="absolute inset-0 bg-gradient-brand opacity-10 pointer-events-none" />
-
-              <div className="relative p-8">
-                <motion.div
-                  animate={{ rotate: [0, 10, -10, 0] }}
-                  transition={{ repeat: Infinity, duration: 2 }}
-                  className="mb-4 text-6xl drop-shadow-[0_0_15px_rgba(255,215,0,0.8)]"
-                >
-                  👑
-                </motion.div>
-
-                <h2 className="mb-2 text-2xl font-black uppercase tracking-widest text-white">Джекпот!</h2>
-
-                <div className="mb-6 text-sm font-bold uppercase tracking-wide text-white/70">
-                  Победитель забирает всё
-                </div>
-
-                <div className="mb-6 rounded-xl border border-white/10 bg-white/5 p-4">
-                  <div className="text-4xl font-mono font-black text-amber-300 drop-shadow-[0_0_12px_rgba(251,191,36,0.35)]">
-                    {winningAmount ? formatNanotonsCompact(parseSafeBigInt(winningAmount)) : "---"}
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => void handleClaimPrize()}
-                  disabled={isClaimingPrize}
-                  className="w-full rounded-xl bg-gradient-gold py-4 text-black font-black uppercase tracking-widest shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all hover:brightness-110 active:translate-y-0.5 active:scale-95"
-                >
-                  {isClaimingPrize ? "Зачисляем..." : isWinningPrizeCredited ? "Продолжить" : "Забрать выигрыш"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WinnerModal
+          amountNanotons={winningAmount}
+          isClaiming={isClaimingPrize}
+          isCredited={isWinningPrizeCredited}
+          onClaim={() => void handleClaimPrize()}
+        />
       )}
 
       {/* GAME HISTORY MODAL */}
