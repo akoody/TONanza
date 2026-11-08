@@ -13,7 +13,7 @@
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
     "check": "npm run typecheck && npm test && npm run frontend:build",
-    "test": "tsx --test test/*.test.ts",
+    "test": "tsx --test test/*.test.ts frontend/test/*.test.ts",
     "test:db": "tsx --test --test-concurrency=1 test/db/*.test.ts"
   },
   "dependencies": {
