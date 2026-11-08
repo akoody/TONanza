@@ -37,7 +37,11 @@ The project is built as a full-stack TypeScript product: a mobile-first Telegram
 │   ├── wallet/           # TON deposit, entropy, and payout services
 │   ├── chat/             # In-game chat schemas, moderation, persistence
 │   ├── bot/              # Telegram bot integration
-│   └── server.ts         # Fastify application entrypoint
+│   ├── http/             # Routes, Telegram auth, security hooks
+│   ├── realtime/         # Socket.IO server and chat events
+│   ├── referrals/        # Referral balance operations
+│   ├── app.ts            # Application assembly
+│   └── server.ts         # Entrypoint
 ├── frontend/             # Telegram Mini App casino client
 ├── prisma/               # Prisma schema and migrations
 ├── Dockerfile            # Production backend image
@@ -78,7 +82,7 @@ npm run frontend:dev          # Mini App
 ## Known limitations
 
 - Rate limit state lives in process memory, so limits are per instance.
-- `frontend/src/App.tsx` and `src/server.ts` are large single files that should be split by feature.
+- `frontend/src/App.tsx` is a large single file that should be split by feature.
 - A withdrawal whose outcome could not be determined stays in `PROCESSING` with a note and needs manual review.
 
 ## License
