@@ -12,8 +12,18 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      # Prisma generate и импорт конфига требуют эти переменные; базы в этих проверках нет.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       APP_WALLET_ADDRESS: EQ_ci_placeholder
     steps:
@@ -30,4 +40,6 @@ jobs:
         working-directory: frontend
       - run: npx prisma generate
       - run: npm run check
+      - run: npx prisma migrate deploy
+      - run: npm run test:db
       - run: npm run build

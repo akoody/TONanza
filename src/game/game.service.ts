@@ -10,6 +10,13 @@ import {
 } from "./provably-fair.js";
 import { clientSeedSource } from "../wallet/ton-entropy.service.js";
 
+/**
+ * Все операции с раундом начинаются с блокировки его строки (FOR UPDATE) или
+ * advisory lock, а баланс меняется условным UPDATE. При SERIALIZABLE параллельные
+ * ставки на одну строку получали ошибку сериализации и отвечали игроку 500.
+ */
+const ROUND_TX_ISOLATION = Prisma.TransactionIsolationLevel.ReadCommitted;
+
 const BPS_DIVISOR = 10_000n;
 const GAME_LOCK_KEY = 7_407_026;
 const MIN_PLAYERS_TO_START = 2;
@@ -127,7 +134,7 @@ export class GameService {
         });
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable
+        isolationLevel: ROUND_TX_ISOLATION
       }
     );
   }
@@ -274,7 +281,7 @@ export class GameService {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: ROUND_TX_ISOLATION,
         maxWait: 5_000,
         timeout: 10_000
       }
@@ -423,7 +430,7 @@ export class GameService {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: ROUND_TX_ISOLATION,
         maxWait: 5_000,
         timeout: 10_000
       }
@@ -667,7 +674,7 @@ export class GameService {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: ROUND_TX_ISOLATION,
         maxWait: 5_000,
         timeout: 15_000
       }
@@ -763,7 +770,7 @@ export class GameService {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: ROUND_TX_ISOLATION,
         maxWait: 5_000,
         timeout: 10_000
       }
@@ -892,7 +899,7 @@ export class GameService {
         };
       },
       {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        isolationLevel: ROUND_TX_ISOLATION,
         maxWait: 5_000,
         timeout: 10_000
       }
